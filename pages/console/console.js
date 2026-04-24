@@ -14,6 +14,25 @@ const HD_BLE_BATCH_DEBOUNCE_MS = 1;
 
 const THUMB_CACHE_PREFIX = "wxcody_thumb_rgb565_slot_";
 
+/** 你画我猜词库（100 个常见物品，与固件 UTF-8 一致） */
+const HD_GUESS_WORDS = [
+  "苹果", "香蕉", "橙子", "西瓜", "草莓", "葡萄", "梨", "桃子", "樱桃", "菠萝",
+  "胡萝卜", "西红柿", "黄瓜", "土豆", "茄子", "白菜", "玉米", "辣椒", "洋葱", "南瓜",
+  "猫", "狗", "兔子", "老虎", "狮子", "大象", "熊猫", "猴子", "鸟", "鱼",
+  "汽车", "自行车", "飞机", "船", "火车", "公交车", "摩托车", "直升机", "火箭", "潜艇",
+  "太阳", "月亮", "星星", "云", "雨", "雪", "彩虹", "闪电", "风", "雷",
+  "房子", "学校", "医院", "桥", "塔", "城堡", "帐篷", "窗户", "门", "楼梯",
+  "书", "笔", "书包", "电脑", "手机", "电视", "钟表", "椅子", "桌子", "床",
+  "足球", "篮球", "乒乓球", "羽毛球", "滑雪", "游泳", "风筝", "秋千", "滑梯", "跷跷板",
+  "蛋糕", "冰淇淋", "面包", "饺子", "面条", "米饭", "糖果", "巧克力", "奶茶", "汉堡",
+  "帽子", "鞋子", "袜子", "手套", "围巾", "眼镜", "雨伞", "背包", "裙子", "裤子",
+];
+
+function pickRandomGuessWord() {
+  const a = HD_GUESS_WORDS;
+  return a[Math.floor(Math.random() * a.length)];
+}
+
 function handdrawCachePath(deviceId) {
   const id = String(deviceId || "unknown").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80);
   const root = (typeof wx !== "undefined" && wx.env && wx.env.USER_DATA_PATH) ? wx.env.USER_DATA_PATH : "";
@@ -400,9 +419,17 @@ Page({
     hdPullPercent: 0,
     /** 清屏进行中：设备与本地画板同步完成前显示遮罩 */
     hdClearing: false,
+    /** 你画我猜开始：设备清屏与本地画布就绪前显示遮罩 */
+    hdGuessStarting: false,
     /** Cody 非手绘模式时盖住画板并禁止绘画 */
     hdDrawBlocked: false,
     hdDrawBlockMsg: "",
+    /** 你画我猜：进行中时画板上方显示词语 */
+    hdGuessPlaying: false,
+    hdGuessPrompt: "",
+    /** 设备处于揭晓答案阶段：禁止绘画（可与 get_mode.guess_show_answer 同步） */
+    hdGuessRevealBlock: false,
+    hdGuessRevealMsg: "本局答案已揭晓，请清屏或开始新游戏后再绘画。",
 
     confirmOpen: false,
     confirmMsg: "",
@@ -438,6 +465,7 @@ Page({
   _hdModePollId: 0,
   _hdBleBatch: null,
   _hdBleBatchTimer: 0,
+  _hdGuessTimer: 0,
 
   onLoad() {
     this._slotsCache = (this.data.slots || []).map((s) => ({ ...s }));
@@ -453,7 +481,19 @@ Page({
       if (!connected) this._stopHanddrawModePoll();
       this.scheduleUiRefresh(true);
       // 断线时不再保持 modal
-      if (!connected) this.setData({ confirmOpen: false });
+      if (!connected) {
+        this.setData({
+          confirmOpen: false,
+          hdGuessPlaying: false,
+          hdGuessPrompt: "",
+          hdGuessStarting: false,
+          hdGuessRevealBlock: false,
+        });
+        if (this._hdGuessTimer) {
+          try { clearTimeout(this._hdGuessTimer); } catch (_) {}
+          this._hdGuessTimer = 0;
+        }
+      }
       if (connected) {
         this._disconnectRedirecting = false;
         this._syncTimeFromPhone().catch(() => {});
@@ -610,6 +650,10 @@ Page({
       this._hdBleBatchTimer = 0;
     }
     this._hdBleBatch = null;
+    if (this._hdGuessTimer) {
+      try { clearTimeout(this._hdGuessTimer); } catch (_) {}
+      this._hdGuessTimer = 0;
+    }
     this._stopHanddrawModePoll();
     this._workCtx = null;
     this._hdCtx = null;
@@ -677,6 +721,10 @@ Page({
 
   async onTab(evt) {
     const tab = Number((evt && evt.currentTarget && evt.currentTarget.dataset && evt.currentTarget.dataset.tab) || 0);
+    if (this.data.hdGuessPlaying && tab !== TAB_HANDDRAW) {
+      this.setData({ status: "你画我猜进行中，请先结束游戏再切换页面" });
+      return;
+    }
     const prevTab = Number(this.data.activeTab);
     if (ble.state.connected && prevTab === TAB_HANDDRAW && tab !== TAB_HANDDRAW) {
       try {
@@ -857,7 +905,39 @@ Page({
     if (!ble.state.connected) return true;
     const m = Number(this.data.modeCurrent);
     if (!Number.isFinite(m) || m < 0) return false;
+    if (m !== 4) return true;
+    if (this.data.hdGuessRevealBlock) return true;
+    return false;
+  },
+
+  /** 仅手绘模式不对时拦截（不含揭晓锁），用于清屏 / 开始结束你画我猜 */
+  _isHanddrawModeOnlyBlocked() {
+    if (!ble.state.connected) return true;
+    const m = Number(this.data.modeCurrent);
+    if (!Number.isFinite(m) || m < 0) return false;
     return m !== 4;
+  },
+
+  _syncGuessRevealFromModeResponse(r) {
+    const showAns = !!(r && (r.guess_show_answer === true || r.guess_show_answer === 1));
+    if (showAns) {
+      if (!this.data.hdGuessRevealBlock || this.data.hdGuessPlaying) {
+        if (this._hdGuessTimer) {
+          try {
+            clearTimeout(this._hdGuessTimer);
+          } catch (_) {}
+          this._hdGuessTimer = 0;
+        }
+        this.setData({
+          hdGuessRevealBlock: true,
+          hdGuessPlaying: false,
+          hdGuessPrompt: "",
+          hdGuessStarting: false,
+        });
+      }
+    } else if (this.data.hdGuessRevealBlock) {
+      this.setData({ hdGuessRevealBlock: false });
+    }
   },
 
   _stopHanddrawModePoll() {
@@ -875,6 +955,7 @@ Page({
       if (Number(this.data.activeTab) !== TAB_HANDDRAW || !ble.state.connected) return;
       try {
         const r = await ble.sendJsonStopAndWait({ cmd: "get_mode" }, { timeoutMs: 700, retries: 1 });
+        this._syncGuessRevealFromModeResponse(r);
         const m = Number(r && r.mode);
         if (Number.isFinite(m) && m !== Number(this.data.modeCurrent)) {
           this.setData({ modeCurrent: m }, () => this._updateHanddrawBlockState());
@@ -1147,7 +1228,7 @@ Page({
   },
 
   async onHdClear() {
-    if (!ble.state.connected || this._isHanddrawPaintBlocked()) return;
+    if (!ble.state.connected || this._isHanddrawModeOnlyBlocked()) return;
     this.setData({ hdClearing: true });
     try {
       await this._awaitHanddrawBleIdle();
@@ -1164,7 +1245,19 @@ Page({
       await this._attachHanddrawCanvasAndPaint(this._hdRgb565Cache, TAB_HANDDRAW);
       this._flushHanddrawPersist();
       this._handdrawBleReady = true;
-      this.setData({ status: "已清屏（可再换背景）" });
+      if (this._hdGuessTimer) {
+        try {
+          clearTimeout(this._hdGuessTimer);
+        } catch (_) {}
+        this._hdGuessTimer = 0;
+      }
+      this.setData({
+        status: "已清屏（可再换背景）",
+        hdGuessPlaying: false,
+        hdGuessPrompt: "",
+        hdGuessStarting: false,
+        hdGuessRevealBlock: false,
+      });
     } catch (err) {
       this.setData({ status: "清屏失败（需处于手绘模式）" });
       ble.log("handdraw_clear FAIL: " + ((err && err.message) || String(err)));
@@ -1172,6 +1265,70 @@ Page({
     } finally {
       this.setData({ hdClearing: false });
     }
+    this.scheduleUiRefresh(true);
+  },
+
+  async _onGuessGameTimeout() {
+    this._hdGuessTimer = 0;
+    if (!this.data.hdGuessPlaying) return;
+    try {
+      await ble.sendJsonStopAndWait({ cmd: "guess_game_end" }, { timeoutMs: 1500, retries: 2 });
+      this.setData({ hdGuessPlaying: false, hdGuessPrompt: "", hdGuessRevealBlock: true });
+    } catch (_) {
+      this.setData({ hdGuessPlaying: false, hdGuessPrompt: "" });
+    }
+    this.scheduleUiRefresh(true);
+  },
+
+  async onHdGuessGame() {
+    if (!ble.state.connected || this._isHanddrawModeOnlyBlocked() || this.data.hdClearing || this.data.hdGuessStarting) return;
+    if (this.data.hdGuessPlaying) {
+      if (this._hdGuessTimer) {
+        try { clearTimeout(this._hdGuessTimer); } catch (_) {}
+        this._hdGuessTimer = 0;
+      }
+      try {
+        await ble.sendJsonStopAndWait({ cmd: "guess_game_end" }, { timeoutMs: 1500, retries: 2 });
+        this.setData({ hdGuessPlaying: false, hdGuessPrompt: "", hdGuessRevealBlock: true });
+      } catch (e) {
+        ble.log("guess_game_end FAIL: " + ((e && e.message) || String(e)));
+        this.setData({ hdGuessPlaying: false, hdGuessPrompt: "" });
+      }
+      this.scheduleUiRefresh(true);
+      return;
+    }
+    const word = pickRandomGuessWord();
+    this.setData({ hdGuessPlaying: true, hdGuessPrompt: word, hdGuessStarting: true, status: "你画我猜进行中" });
+    try {
+      await this._awaitHanddrawBleIdle();
+      await ble.sendJsonStopAndWait({ cmd: "guess_game_start", word, seconds: 180 }, { timeoutMs: 2500, retries: 2 });
+      const bg = this.data.hdBg || "black";
+      this._hdRgb565Cache = makeSolidHanddrawRgb565(bg);
+      if (this._hdLast) this._hdLast.canvasDraw = null;
+      await this._attachHanddrawCanvasAndPaint(this._hdRgb565Cache, TAB_HANDDRAW);
+      this._flushHanddrawPersist();
+      this._handdrawBleReady = true;
+    } catch (e) {
+      if (this._hdGuessTimer) {
+        try { clearTimeout(this._hdGuessTimer); } catch (_) {}
+        this._hdGuessTimer = 0;
+      }
+      this.setData({
+        hdGuessPlaying: false,
+        hdGuessPrompt: "",
+        hdGuessStarting: false,
+        hdGuessRevealBlock: false,
+        status: "你画我猜开始失败（需设备为手绘模式且固件支持）",
+      });
+      ble.log("guess_game_start FAIL: " + ((e && e.message) || String(e)));
+      this.scheduleUiRefresh(true);
+      return;
+    }
+    this.setData({ hdGuessStarting: false, hdGuessRevealBlock: false });
+    if (this._hdGuessTimer) {
+      try { clearTimeout(this._hdGuessTimer); } catch (_) {}
+    }
+    this._hdGuessTimer = setTimeout(() => this._onGuessGameTimeout(), 180000);
     this.scheduleUiRefresh(true);
   },
 
@@ -1250,6 +1407,7 @@ Page({
     if (!ble.state.connected) return;
     try {
       const r = await ble.sendJsonStopAndWait({ cmd: "get_mode" }, { timeoutMs: 800, retries: 3 });
+      this._syncGuessRevealFromModeResponse(r);
       const m = Number(r && r.mode);
       if (Number.isFinite(m)) {
         this.setData({ modeCurrent: m, status: "模式已刷新" }, () => this._updateHanddrawBlockState());
@@ -1265,6 +1423,10 @@ Page({
 
   async onSetMode(evt) {
     if (!ble.state.connected) return;
+    if (this.data.hdGuessPlaying) {
+      this.setData({ status: "你画我猜进行中，请先结束游戏再切换模式" });
+      return;
+    }
     const mode = Number((evt && evt.currentTarget && evt.currentTarget.dataset && evt.currentTarget.dataset.mode) || 0);
     const cur = Number(this.data.modeCurrent);
     if (Number.isFinite(cur) && cur === 4 && mode !== 4) {
@@ -1278,6 +1440,8 @@ Page({
         this.setData({ modeCurrent: mode, status: "切换成功" }, () => this._updateHanddrawBlockState());
       } else if (r && r.msg === "handdraw_transfer_busy") {
         this.setData({ status: "笔迹同步中，请稍后再切模式" }, () => this._updateHanddrawBlockState());
+      } else if (r && r.msg === "guess_game_active") {
+        this.setData({ status: "你画我猜进行中，请先结束游戏再切换模式" }, () => this._updateHanddrawBlockState());
       } else {
         this.setData({ status: "切换失败" }, () => this._updateHanddrawBlockState());
       }

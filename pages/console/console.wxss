@@ -150,13 +150,23 @@
   margin-bottom: 8px;
 }
 
-/* 画板在 .card 圆角容器内，裁剪画布与遮罩为圆角 */
+.hdGuessPrompt {
+  width: 100%;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 700;
+  color: #e67e22;
+  margin-bottom: 10px;
+  letter-spacing: 0.05em;
+}
+
+/* 画板与全屏遮罩均为直角，与设备 240×240 像素对齐 */
 .hdCanvasWrap {
   position: relative;
   width: 240px;
   height: 240px;
   margin: 0 auto 12px;
-  border-radius: 12px;
+  border-radius: 0;
   overflow: hidden;
 }
 
@@ -180,6 +190,7 @@
   box-sizing: border-box;
   padding: 16px 12px;
   background: rgba(0, 0, 0, 0.75);
+  border-radius: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -199,7 +210,7 @@
 .hdPullBarTrack {
   width: 200px;
   height: 8px;
-  border-radius: 4px;
+  border-radius: 0;
   background: #333;
   overflow: hidden;
   margin-bottom: 10px;
@@ -207,7 +218,7 @@
 
 .hdPullBarFill {
   height: 100%;
-  border-radius: 4px;
+  border-radius: 0;
   background: #e67e22;
   width: 0%;
   transition: width 0.12s ease-out;
@@ -229,6 +240,7 @@
   padding: 14px 12px;
   background: rgba(18, 18, 20, 0.88);
   border: 1px solid #5d4a32;
+  border-radius: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -251,6 +263,7 @@
   box-sizing: border-box;
   padding: 16px 12px;
   background: rgba(0, 0, 0, 0.78);
+  border-radius: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -262,6 +275,11 @@
   color: #eee;
   font-size: 13px;
   font-weight: 600;
+}
+
+/* 与清屏遮罩同样式，叠在拉取进度之上，避免开始游戏时仍可误触画板 */
+.hdGuessStartOverlay {
+  z-index: 6;
 }
 
 .hdSwatch {
