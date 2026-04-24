@@ -1,121 +1,119 @@
-# WXCody（微信小程序）使用说明
+## WXCody（微信小程序：Cody BLE 管理端）
 
-WXCody 用于通过 **BLE 蓝牙直连** 管理 Cody 设备（设备名以 `Cody-` 为前缀），支持 **连接 / PING / 图库 / OTA**。
+本目录是 **微信小程序**，用于通过 **BLE（GATT）** 直连 `Cody` 设备，完成模式切换、图库传输、笔记管理、设置与 OTA 升级等操作。
 
-## 用微信开发者工具打开
+### 运行环境
 
-1. 打开 **微信开发者工具**
-2. 选择「导入项目」
-3. **项目目录**选择本仓库下的 `WXCody/`（即 `d:\mochi\WXCody`）
-4. AppID：
-   - 有自己的小程序 AppID 就填自己的
-   - 仅本地调试可选「测试号 / 无 AppID」（按你工具版本的选项为准）
-5. 导入完成后，直接运行到真机（需要手机微信扫码预览/真机调试）
+- **微信开发者工具**（项目类型：小程序）
+- **手机端微信**（真机调试 BLE 必需）
+- **已烧录并运行 Cody 固件**（见 `../Cody/README.md`）
 
-## 设备与 BLE 约定（必须一致）
+### 快速开始
 
-- **设备名**：广播名称以 `Cody-` 开头（小程序按此前缀筛选）
-- **BLE UUID**
-  - **Service UUID**：`0000C0DE-0000-1000-8000-00805F9B34FB`
-  - **RX Characteristic UUID（Write）**：`0000C0D1-0000-1000-8000-00805F9B34FB`
-  - **TX Characteristic UUID（Notify）**：`0000C0D2-0000-1000-8000-00805F9B34FB`
+1. 打开微信开发者工具，选择“导入项目”
+2. 项目目录选择本文件夹：`WXCody/`
+3. AppID 使用 `project.config.json` 里的（或替换为你的测试号）
+4. 真机调试运行
 
-## 权限与平台注意事项（简版）
+### 页面与入口
 
-- **蓝牙权限**：需要打开手机蓝牙；微信内也需要允许小程序使用蓝牙。
-- **定位权限（常见坑）**：
-  - Android 上 BLE 扫描通常需要「定位」权限/定位开关，否则可能**扫不到设备**。
-  - iOS 一般不要求用户单独开启定位来扫描 BLE，但仍需允许蓝牙。
-- **iOS/Android 差异**（尽量少记）：
-  - Android 更容易被「系统蓝牙/定位开关、权限被拒」影响扫描与连接。
-  - iOS 更容易受「系统蓝牙权限/后台限制」影响（尽量在前台操作）。
+页面列表定义在 `app.json`：
 
-## 使用流程（连接 → PING → 图库 → OTA）
+- `pages/splash/splash`：启动页（尝试自动重连上次设备，失败则进入连接页）
+- `pages/connect/connect`：连接页（打开蓝牙、扫描 `Cody-*`、连接、PING、查看日志）
+- `pages/console/console`：主控制台（模式 / 图库 / 笔记 / 设置 + OTA）
+- `pages/ota/ota`：独立 OTA 页（选择文件或 URL 下载，然后推送 OTA）
+- `pages/gallery/gallery`：独立 图库 页（拉取/上传 slot 图片预览）
 
-### 1) 连接
+### BLE 约定（必须与固件一致）
 
-进入「连接」页：
+UUID 常量在 `services/ble.ts`（以及运行时实际使用的 `services/ble.js`）中定义：
 
-1. 点「打开蓝牙」
-2. 点「扫描并连接 Cody-*」
-3. 连接成功后会自动完成服务发现并开启 **Notify（TX）**
+- **Service UUID**：`0000C0DE-0000-1000-8000-00805F9B34FB`
+- **RX Char UUID（Write/WriteNoResponse）**：`0000C0D1-0000-1000-8000-00805F9B34FB`
+- **TX Char UUID（Notify）**：`0000C0D2-0000-1000-8000-00805F9B34FB`
 
-### 2) PING
+扫描过滤策略：默认按设备名 `Cody-` 前缀匹配（见 `pages/connect/connect.ts` / `services/ble.js`）。
 
-在「连接」页点击「发送 PING」：
+### 首次连接/绑定（重要）
 
-- 期望结果：状态显示 **PING OK**（收到 ACK）
-- 用途：快速验证 **写入（RX）** 与 **通知（TX）** 两条链路是否都正常
+固件端启用了“首次连接需要确认”的绑定逻辑（pair pending）：
 
-### 3) 图库
+- 小程序连接后，需要先发送 `pair_hello`（JSONL）上报 `name/id`
+- 设备端会弹出确认界面（在 Cody 屏幕上），用户按键确认后才会放行后续命令
+- 已绑定后，设备会只信任该 `clientId`，其它手机连接会被直接断开
 
-进入「图库」页：
+在控制台“断开连接”流程中，小程序会调用 `{"cmd":"ble_forget"}` 清除设备端信任记录，并清空本地缓存（保留本机身份键），以便下次重新配对。
 
-- **拉取（Pull）**：从设备读取指定 slot 的图片并预览
-- **推送（Push）**：从相册/相机选图，缩放裁剪到 240×240 后上传到设备指定 slot
+### 协议
 
-### 4) OTA
+本项目同时使用两类协议：
 
-进入「OTA」页：
+#### 1) JSONL（控制命令）
 
-1. 先确保已在「连接」页连接到 `Cody-*`
-2. 在 OTA 页选择固件：
-   - 「选择文件」：从聊天文件里选 `.bin`
-   - 或填写 URL 并「下载」
-3. 点「开始 OTA」
+- **发送**：`JSON.stringify(obj) + "\n"` 写入 RX
+- **接收**：固件会把一行 JSONL 通过 TX notify 发送，且可能被分片；小程序端按字节拼接，遇到 `\n` 再整体 UTF-8 解码与 `JSON.parse`
 
-重要提醒：
+实现位于 `services/ble.js` 的 `sendJson()/sendJsonStopAndWait()` 与 `_consumeJsonl()`。
 
-- **OTA 推送完成后设备通常会断连并重启**（这是正常现象），需要回到连接页重新连接。
+常用命令（示例）：
 
-## 故障排查
+- `{"cmd":"get_mode"}`
+- `{"cmd":"set_mode","mode":0}`
+- `{"cmd":"image_info"}`
+- `{"cmd":"get_notes"}`
+- `{"cmd":"save_note","content":"...","index":-1}`
+- `{"cmd":"delete_note","index":0}`
+- `{"cmd":"set_note_config","pinned":-1,"slideshow":true,"interval":10}`
+- `{"cmd":"fs_space"}`
+- `{"cmd":"bright","v":200}`
+- `{"cmd":"format_fs"}`
+- `{"cmd":"reset_system"}`
+- `{"cmd":"ota_info"}`
+- `{"cmd":"sync_time","timestamp":<unix_seconds>}`
 
-建议先在相关页面点击「复制日志」，再排查（日志会包含扫描/连接/ACK/错误信息）。
+#### 2) 二进制分帧（图片/OTA）
 
-### 扫不到设备（scan timeout / 看不到 `Cody-*`）
+帧格式实现位于 `services/proto_bin.ts`：
 
-- 确认设备已上电且在广播（设备名应以 `Cody-` 开头）
-- 确认手机 **蓝牙已打开**
-- Android：
-  - 允许微信/小程序的蓝牙权限
-  - 允许定位权限，并打开系统定位开关（很多机型不打开会扫不到）
-- 尽量靠近设备（BLE 距离/遮挡会明显影响扫描）
+- MAGIC：`0xC0 0xDE`
+- `TYPE / SESSION / SEQ / LEN / PAYLOAD / CRC16`
+- 采用 stop-and-wait（发一包等 ACK），部分场景也支持并发窗口发送（见 `pages/console/console.js` OTA 上传的 `windowN`）
 
-### 连不上（createBLEConnection 失败 / 连接后立刻断）
+帧类型（节选）：
 
-- 先在系统蓝牙里断开/忽略旧连接（如有），再回到小程序重试
-- 设备可能已被其他手机连接占用：断开其他连接后再试
-- 反复失败时：重启手机蓝牙（关/开），或重启设备
+- `Ping=0x01`, `Ack=0x7f`
+- 图库：`ImgPullBegin/Chunk/Finish`，`ImgPushBegin/Chunk/Finish`
+- OTA：`OtaBegin/Chunk/Finish/Status`
 
-### 收不到 notify（PING 一直超时 / 没有 ACK）
+### 图库（RGB565）
 
-典型现象：
+- 图片统一处理为 **240×240 RGB565**（2 bytes/pixel，总大小 115200 bytes）
+- 上传时小程序会在 canvas 上居中裁切缩放到 240×240，再转 RGB565 分块发送
+- 拉取时会接收 RGB565 分块，拼满后渲染到 canvas，并缓存到本地 storage（用于下次快速预览）
 
-- 连接显示成功，但点 PING 报 `PING timeout` 或一直没有 ACK
+实现主要在：
 
-处理顺序：
+- `pages/gallery/gallery.ts`（独立图库页）
+- `pages/console/console.js`（控制台图库 tab，更完整：缓存/队列拉取/替换策略/取消上传等）
 
-- 先确认已连接到正确设备（`Cody-*`）
-- 重新连接一次（断开后再连，确保重新执行服务发现 + `notify` 开启）
-- 若仍不行，重点核对固件与小程序的 UUID 是否一致：
-  - Service：`0000C0DE-0000-1000-8000-00805F9B34FB`
-  - RX(Write)：`0000C0D1-0000-1000-8000-00805F9B34FB`
-  - TX(Notify)：`0000C0D2-0000-1000-8000-00805F9B34FB`
+### OTA 升级
 
-### OTA 中断（断线 / 超时 / 卡在某个百分比）
+两种入口：
 
-- BLE OTA 过程中如果离得太远、系统切后台、或链路不稳定，可能中断
-- 处理建议：
-  - 保持小程序在前台、靠近设备，避免锁屏/切后台
-  - 回到「连接」页重新连接后，再回到 OTA 页重试
-  - 如多次失败，换更小的固件或确认设备电源稳定
+- `pages/ota/ota.ts`：选择 `.bin` 文件或输入 URL 下载，然后通过二进制帧推送
+- `pages/console/console.js` 设置页：可从远端 URL 检查版本并下载 `firmware.bin` 推送
 
-### 关于固件分区：`huge_app`
+注意：
 
-如果你的固件使用了 **`huge_app` 分区方案**（常见含义是：把 App 分区做得很大，通常会牺牲/取消 OTA 分区），可能导致：
+- OTA 会推送原始 `firmware.bin`，设备端写入 OTA 分区并在成功后重启（通常表现为 BLE 断开）
 
-- **没有可用 OTA 分区** 或 OTA 空间不足
-- 小程序 OTA 推送到最后会失败、或设备无法切换到新固件
+### 常见问题
 
-要使用 BLE OTA，请确保固件编译/烧录时选择的分区方案 **包含 OTA 分区**（通常是带双 App/OTA 的方案），并且固件大小不要超过 OTA 可用分区容量。
-
+- **扫描不到设备**：
+  - 确认固件在广播（设备名应以 `Cody-` 开头）
+  - 手机系统蓝牙已开启、微信已授予蓝牙权限
+- **写入失败/超时**：
+  - BLE 写入在不同机型上吞吐差异很大，项目内已对 JSON 与 BIN 做了分片与节流；仍可尝试靠近设备或重连
+- **首次连接无法控制**：
+  - 需要在设备上完成“连接确认”（pair pending），否则固件会对命令返回 `need_confirm`
