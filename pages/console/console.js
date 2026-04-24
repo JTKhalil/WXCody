@@ -1237,10 +1237,12 @@ Page({
 
   async _sendNoteConfigThrottled(force) {
     if (!ble.state.connected) return;
-    if (this.data.notePinnedOrig >= 0) return; // 置顶时不发送轮播配置
+    // 置顶时设备端轮播关闭，但仍需把 interval 等配置同步到固件（取消置顶后立即生效）
+    const pinned = Number(this.data.notePinnedOrig) || -1;
+    const slideshow = pinned >= 0 ? false : !!this.data.noteSlideshow;
     try {
       await ble.sendJsonStopAndWait(
-        { cmd: "set_note_config", pinned: Number(this.data.notePinnedOrig) || -1, slideshow: !!this.data.noteSlideshow, interval: Number(this.data.noteInterval) || 10 },
+        { cmd: "set_note_config", pinned, slideshow, interval: Number(this.data.noteInterval) || 10 },
         { timeoutMs: 1200, retries: 3 }
       );
     } catch (e) {
