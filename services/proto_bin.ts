@@ -16,6 +16,10 @@ export enum FrameType {
   OtaChunk = 0x21,
   OtaFinish = 0x22,
   OtaStatus = 0x23,
+  /** 手绘线段：payload 7B，与固件 kHanddrawStroke 一致；无 ACK */
+  HanddrawStroke = 0x30,
+  /** 多段手绘：1B 数量 + n×7B；无 ACK */
+  HanddrawStrokeBatch = 0x31,
 }
 
 export type Frame = {
@@ -54,6 +58,43 @@ export function buildFrame(type: number, session: number, seq: number, payload?:
 
 export function buildPing(session: number, seq: number): Uint8Array {
   return buildFrame(FrameType.Ping, session, seq);
+}
+
+/** x/y 0..239；c 为 RGB565；w 笔宽（固件内会约束到 1..24） */
+export function buildHanddrawStrokePayload(x0: number, y0: number, x1: number, y1: number, c: number, w: number): Uint8Array {
+  const p = new Uint8Array(7);
+  p[0] = x0 & 0xff;
+  p[1] = y0 & 0xff;
+  p[2] = x1 & 0xff;
+  p[3] = y1 & 0xff;
+  const col = c & 0xffff;
+  p[4] = col & 0xff;
+  p[5] = (col >> 8) & 0xff;
+  p[6] = w & 0xff;
+  return p;
+}
+
+const HANDDRAW_BATCH_MAX = 14;
+
+export function buildHanddrawStrokeBatchPayload(
+  segs: Array<{ x0: number; y0: number; x1: number; y1: number; c: number; w: number }>
+): Uint8Array {
+  const n = Math.min(Math.max(0, segs.length), HANDDRAW_BATCH_MAX);
+  const p = new Uint8Array(1 + n * 7);
+  p[0] = n & 0xff;
+  for (let i = 0; i < n; i++) {
+    const s = segs[i];
+    const o = 1 + i * 7;
+    p[o] = s.x0 & 0xff;
+    p[o + 1] = s.y0 & 0xff;
+    p[o + 2] = s.x1 & 0xff;
+    p[o + 3] = s.y1 & 0xff;
+    const col = s.c & 0xffff;
+    p[o + 4] = col & 0xff;
+    p[o + 5] = (col >> 8) & 0xff;
+    p[o + 6] = s.w & 0xff;
+  }
+  return p;
 }
 
 export function buildAck(session: number, seq: number, origType: number, errCode: number): Uint8Array {

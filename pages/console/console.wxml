@@ -7,6 +7,7 @@
       <view class="modeBtn mode1 {{modeCurrent===1?'on':''}}" bindtap="onSetMode" data-mode="1">⏰ 时钟模式</view>
       <view class="modeBtn mode2 {{modeCurrent===2?'on':''}}" bindtap="onSetMode" data-mode="2">📝 笔记模式</view>
       <view class="modeBtn mode3 {{modeCurrent===3?'on':''}}" bindtap="onSetMode" data-mode="3">😊 表情模式</view>
+      <view class="modeBtn mode4 {{modeCurrent===4?'on':''}}" bindtap="onSetMode" data-mode="4">✏️ 手绘模式</view>
     </view>
   </view>
 
@@ -86,8 +87,38 @@
     </view>
   </view>
 
+  <!-- Tab: Handdraw（紧跟笔记；hidden 保留 canvas 节点，避免 wx:if 销毁导致闪断） -->
+  <view class="card" hidden="{{activeTab!==3}}">
+    <view class="hdLabel">画板</view>
+    <view class="hdCanvasWrap">
+      <canvas id="canvasDraw" type="2d" class="hdCanvas" bindtouchstart="onHdTouchStart" catchtouchmove="onHdTouchMove" bindtouchend="onHdTouchEnd" bindtouchcancel="onHdTouchEnd" />
+      <view wx:if="{{hdPulling}}" class="hdPullOverlay">
+        <text class="hdPullTitle">正在从设备同步画稿</text>
+        <view class="hdPullBarTrack">
+          <view class="hdPullBarFill" style="width: {{hdPullPercent}}%;" />
+        </view>
+        <text class="hdPullPct">{{hdPullPercent}}%</text>
+      </view>
+      <view wx:if="{{hdDrawBlocked}}" class="hdModeBlockOverlay" catchtouchmove="noop" catchtouchstart="noop">
+        <text class="hdModeBlockText">{{hdDrawBlockMsg}}</text>
+      </view>
+      <view wx:if="{{hdClearing}}" class="hdClearOverlay" catchtouchmove="noop" catchtouchstart="noop">
+        <loading mode="circular">正在清屏…</loading>
+      </view>
+    </view>
+    <view class="row" style="margin-bottom:8px; flex-wrap:wrap;">
+      <view class="mono" style="width:100%;margin-bottom:6px;">颜色</view>
+      <view wx:for="{{hdPalette}}" wx:key="*this" class="hdSwatch {{hdPenHex===item?'hdSwatchOn':''}}" style="background:{{item}};" data-hex="{{item}}" bindtap="onHdPickColor" />
+    </view>
+    <view class="mono" style="margin-top:8px;">粗细：{{hdStrokeW}} px</view>
+    <slider min="2" max="16" value="{{hdStrokeW}}" step="2" bindchanging="onHdStrokeChanging" bindchange="onHdStrokeChange" />
+    <view class="row" style="margin-top:12px;">
+      <button class="btn secondary" bindtap="onHdClear" disabled="{{!connected || hdDrawBlocked || hdClearing}}">清屏</button>
+    </view>
+  </view>
+
   <!-- Tab: Settings -->
-  <view class="card" wx:if="{{activeTab===3}}">
+  <view class="card" wx:if="{{activeTab===4}}">
     <view class="title">当前连接</view>
     <view class="mono">Cody：{{codyName || "-"}}</view>
     <view class="row" style="margin-top:10px;">
@@ -95,7 +126,7 @@
     </view>
   </view>
 
-  <view class="card" wx:if="{{activeTab===3}}">
+  <view class="card" wx:if="{{activeTab===4}}">
     <view class="title">存储空间</view>
     <view class="mono">total: {{fsTotal}} KB</view>
     <view class="mono">used: {{fsUsed}} KB</view>
@@ -106,7 +137,7 @@
     </view>
   </view>
 
-  <view class="card" wx:if="{{activeTab===3}}">
+  <view class="card" wx:if="{{activeTab===4}}">
     <view class="title">固件版本</view>
     <view class="mono">current: {{fwCurrent || "-"}}</view>
     <view class="mono">latest: {{fwLatest || "-"}}</view>
@@ -123,13 +154,13 @@
     </view>
   </view>
 
-  <view class="card" wx:if="{{activeTab===3}}">
+  <view class="card" wx:if="{{activeTab===4}}">
     <view class="title">背光亮度</view>
     <view class="mono">亮度：{{brightness}}</view>
     <slider min="0" max="255" value="{{brightness}}" step="1" bindchanging="onBrightnessChanging" bindchange="onBrightnessChange" />
   </view>
 
-  <view class="card" wx:if="{{activeTab===3}}">
+  <view class="card" wx:if="{{activeTab===4}}">
     <view class="title danger">危险操作</view>
     <view class="row">
       <button class="btn danger" bindtap="onAskConfirm" data-action="format_fs" disabled="{{!connected}}">删除Cody上的所有数据</button>
@@ -137,12 +168,13 @@
     </view>
   </view>
 
-  <!-- Bottom Tabs -->
+  <!-- Bottom Tabs：手绘在笔记后、设置前 -->
   <view class="tabsBottom">
     <button class="tabBtn {{activeTab===0?'active':''}}" bindtap="onTab" data-tab="0">模式</button>
     <button class="tabBtn {{activeTab===1?'active':''}}" bindtap="onTab" data-tab="1">图库</button>
     <button class="tabBtn {{activeTab===2?'active':''}}" bindtap="onTab" data-tab="2">笔记</button>
-    <button class="tabBtn {{activeTab===3?'active':''}}" bindtap="onTab" data-tab="3">设置</button>
+    <button class="tabBtn {{activeTab===3?'active':''}}" bindtap="onTab" data-tab="3">手绘</button>
+    <button class="tabBtn {{activeTab===4?'active':''}}" bindtap="onTab" data-tab="4">设置</button>
   </view>
 
   <!-- Confirm modal -->

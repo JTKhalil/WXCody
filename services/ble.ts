@@ -1,4 +1,14 @@
-import { Frame, FrameParser, FrameType, buildAck, buildFrame, buildPing, isAckForPingOk } from "./proto_bin";
+import {
+  Frame,
+  FrameParser,
+  FrameType,
+  buildAck,
+  buildFrame,
+  buildHanddrawStrokePayload,
+  buildHanddrawStrokeBatchPayload,
+  buildPing,
+  isAckForPingOk,
+} from "./proto_bin";
 
 const SERVICE_UUID = "0000C0DE-0000-1000-8000-00805F9B34FB";
 const RX_UUID = "0000C0D1-0000-1000-8000-00805F9B34FB";
@@ -12,6 +22,10 @@ export type BleState = {
   serviceId?: string;
   rxCharId?: string;
   txCharId?: string;
+  /** 协商后的 ATT MTU（Android setBLEMTU），用于 JSON 分片大小 */
+  mtu?: number;
+  /** RX 特征是否支持 Write Without Response（与 ble.js 一致） */
+  rxWriteNoResp?: boolean;
 };
 
 export class BleCodyClient {
@@ -198,6 +212,14 @@ export class BleCodyClient {
     await this.discoverAndSubscribe();
   }
 
+  private async _ensureReady(): Promise<void> {
+    if (this.state.serviceId && this.state.rxCharId && this.state.txCharId) return;
+    if (!this.state.connected || !this.state.deviceId) {
+      throw new Error("BLE not connected");
+    }
+    await this.discoverAndSubscribe();
+  }
+
   async discoverAndSubscribe(): Promise<void> {
     const deviceId = must(this.state.deviceId, "no deviceId");
 
@@ -228,6 +250,35 @@ export class BleCodyClient {
     if (!tx) throw new Error("tx characteristic not found: " + TX_UUID);
     this.state.rxCharId = rx.uuid;
     this.state.txCharId = tx.uuid;
+    try {
+      const p = rx.properties || {};
+      this.state.rxWriteNoResp = !!(p.writeNoResponse || p.write_no_response || p.writeNR || p.write_nr);
+    } catch {
+      this.state.rxWriteNoResp = false;
+    }
+
+    try {
+      if (wx.canIUse?.("setBLEMTU")) {
+        const desired = 247;
+        await p<void>((resolve) => {
+          wx.setBLEMTU({
+            deviceId,
+            mtu: desired,
+            success: (res) => {
+              try {
+                this.state.mtu = Number(res?.mtu) || desired;
+              } catch {
+                this.state.mtu = desired;
+              }
+              resolve();
+            },
+            fail: () => resolve(),
+          });
+        });
+      }
+    } catch {
+      /* ignore */
+    }
 
     await p<void>((resolve, reject) => {
       wx.notifyBLECharacteristicValueChange({
@@ -241,26 +292,79 @@ export class BleCodyClient {
     });
   }
 
-  async write(bytes: Uint8Array): Promise<void> {
+  async write(bytes: Uint8Array, wopts?: { writeNoResponse?: boolean }): Promise<void> {
     // 所有 write 必须串行化（单飞），避免并发写导致随机失败/卡住。
     this._writeQ = this._writeQ.then(async () => {
+      await this._ensureReady();
       const deviceId = must(this.state.deviceId, "no deviceId");
       const serviceId = must(this.state.serviceId, "no serviceId");
       const characteristicId = must(this.state.rxCharId, "no rxCharId");
 
+      const useNr =
+        !!wopts?.writeNoResponse &&
+        !!this.state.rxWriteNoResp &&
+        !!(wx.canIUse?.("writeBLECharacteristicValue.writeType"));
+
       await p<void>((resolve, reject) => {
-        wx.writeBLECharacteristicValue({
+        const args: WechatMiniprogram.WriteBLECharacteristicValueOption = {
           deviceId,
           serviceId,
           characteristicId,
           value: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
           success: () => resolve(),
           fail: (e) => reject(new Error(e?.errMsg || "writeBLECharacteristicValue failed")),
-        });
+        };
+        if (useNr) {
+          (args as WechatMiniprogram.WriteBLECharacteristicValueOption & { writeType?: string }).writeType =
+            "writeNoResponse";
+        }
+        wx.writeBLECharacteristicValue(args);
       });
     });
 
     return this._writeQ;
+  }
+
+  /** JSONL 一行；分片写入（与 ble.js 一致），用于高频 draw_stroke 等 */
+  async sendJson(
+    obj: Record<string, unknown>,
+    opts?: { interChunkDelayMs?: number; writeNoResponse?: boolean }
+  ): Promise<void> {
+    const line = JSON.stringify(obj) + "\n";
+    const u8 = utf8Encode(line);
+    const mtu = Number(this.state.mtu) || 0;
+    const kChunk = mtu >= 60 ? Math.min(180, Math.max(20, mtu - 3)) : 20;
+    const perChunkDelayMs =
+      typeof opts?.interChunkDelayMs === "number" ? opts.interChunkDelayMs : 6;
+    const chunkNr = !!(opts?.writeNoResponse && this.state.rxWriteNoResp);
+    for (let off = 0; off < u8.length; off += kChunk) {
+      const part = u8.subarray(off, Math.min(u8.length, off + kChunk));
+      await this.write(part, chunkNr ? { writeNoResponse: true } : undefined);
+      if (perChunkDelayMs > 0 && off + kChunk < u8.length) {
+        await new Promise<void>((r) => setTimeout(r, perChunkDelayMs));
+      }
+    }
+  }
+
+  /** 手绘线段：二进制单帧，与 ble.js 一致 */
+  async sendHanddrawStrokeBin(seg: { x0: number; y0: number; x1: number; y1: number; c: number; w: number }): Promise<void> {
+    const pl = buildHanddrawStrokePayload(seg.x0 | 0, seg.y0 | 0, seg.x1 | 0, seg.y1 | 0, seg.c & 0xffff, seg.w | 0);
+    const { session, seq } = this.nextSessionSeq();
+    const frame = buildFrame(FrameType.HanddrawStroke, session, seq, pl);
+    await this.write(frame, { writeNoResponse: true });
+  }
+
+  async sendHanddrawStrokeBatchBin(segs: Array<{ x0: number; y0: number; x1: number; y1: number; c: number; w: number }>): Promise<void> {
+    const list = Array.isArray(segs) ? segs : [];
+    if (!list.length) return;
+    if (list.length === 1) {
+      await this.sendHanddrawStrokeBin(list[0]);
+      return;
+    }
+    const pl = buildHanddrawStrokeBatchPayload(list);
+    const { session, seq } = this.nextSessionSeq();
+    const frame = buildFrame(FrameType.HanddrawStrokeBatch, session, seq, pl);
+    await this.write(frame, { writeNoResponse: true });
   }
 
   nextSessionSeq(): { session: number; seq: number } {
@@ -400,6 +504,40 @@ function must<T>(v: T | undefined, msg: string): T {
 
 function p<T>(fn: (resolve: (v: T) => void, reject: (e: any) => void) => void): Promise<T> {
   return new Promise(fn);
+}
+
+function utf8Encode(str: string): Uint8Array {
+  try {
+    if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(str);
+  } catch {
+    /* fall through */
+  }
+  const out: number[] = [];
+  for (let i = 0; i < str.length; i++) {
+    let c = str.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff && i + 1 < str.length) {
+      const d = str.charCodeAt(i + 1);
+      if (d >= 0xdc00 && d <= 0xdfff) {
+        c = 0x10000 + ((c - 0xd800) << 10) + (d - 0xdc00);
+        i++;
+      }
+    }
+    if (c <= 0x7f) out.push(c);
+    else if (c <= 0x7ff) {
+      out.push(0xc0 | (c >> 6));
+      out.push(0x80 | (c & 0x3f));
+    } else if (c <= 0xffff) {
+      out.push(0xe0 | (c >> 12));
+      out.push(0x80 | ((c >> 6) & 0x3f));
+      out.push(0x80 | (c & 0x3f));
+    } else {
+      out.push(0xf0 | (c >> 18));
+      out.push(0x80 | ((c >> 12) & 0x3f));
+      out.push(0x80 | ((c >> 6) & 0x3f));
+      out.push(0x80 | (c & 0x3f));
+    }
+  }
+  return new Uint8Array(out);
 }
 
 export const ble = new BleCodyClient();

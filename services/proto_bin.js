@@ -16,6 +16,8 @@ export const FrameType = {
   OtaChunk: 0x21,
   OtaFinish: 0x22,
   OtaStatus: 0x23,
+  HanddrawStroke: 0x30,
+  HanddrawStrokeBatch: 0x31,
 };
 
 // ACK errCode constants (must match firmware include/ble/ble_proto.h)
@@ -59,6 +61,40 @@ export function buildFrame(type, session, seq, payload) {
 
 export function buildPing(session, seq) {
   return buildFrame(FrameType.Ping, session, seq);
+}
+
+export function buildHanddrawStrokePayload(x0, y0, x1, y1, c, w) {
+  const p = new Uint8Array(7);
+  p[0] = x0 & 0xff;
+  p[1] = y0 & 0xff;
+  p[2] = x1 & 0xff;
+  p[3] = y1 & 0xff;
+  const col = c & 0xffff;
+  p[4] = col & 0xff;
+  p[5] = (col >> 8) & 0xff;
+  p[6] = w & 0xff;
+  return p;
+}
+
+const HANDDRAW_BATCH_MAX = 14;
+
+export function buildHanddrawStrokeBatchPayload(segs) {
+  const n = Math.min(Math.max(0, segs.length), HANDDRAW_BATCH_MAX);
+  const p = new Uint8Array(1 + n * 7);
+  p[0] = n & 0xff;
+  for (let i = 0; i < n; i++) {
+    const s = segs[i];
+    const o = 1 + i * 7;
+    p[o] = s.x0 & 0xff;
+    p[o + 1] = s.y0 & 0xff;
+    p[o + 2] = s.x1 & 0xff;
+    p[o + 3] = s.y1 & 0xff;
+    const col = s.c & 0xffff;
+    p[o + 4] = col & 0xff;
+    p[o + 5] = (col >> 8) & 0xff;
+    p[o + 6] = s.w & 0xff;
+  }
+  return p;
 }
 
 export function buildAck(session, seq, origType, errCode) {

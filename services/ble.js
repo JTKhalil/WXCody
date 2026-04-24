@@ -1,4 +1,13 @@
-import { FrameParser, FrameType, buildAck, buildFrame, buildPing, isAckForPingOk } from "./proto_bin";
+import {
+  FrameParser,
+  FrameType,
+  buildAck,
+  buildFrame,
+  buildHanddrawStrokePayload,
+  buildHanddrawStrokeBatchPayload,
+  buildPing,
+  isAckForPingOk,
+} from "./proto_bin";
 
 const SERVICE_UUID = "0000C0DE-0000-1000-8000-00805F9B34FB";
 const RX_UUID = "0000C0D1-0000-1000-8000-00805F9B34FB";
@@ -450,7 +459,7 @@ export class BleCodyClient {
     // If unsupported, it will just fail silently.
     try {
       if (wx.canIUse && wx.canIUse("setBLEMTU")) {
-        const desired = 185;
+        const desired = 247;
         await p((resolve) => {
           wx.setBLEMTU({
             deviceId,
@@ -503,8 +512,17 @@ export class BleCodyClient {
       const kind = (opts && opts.kind) || "bin";
       // JSON：必须分片（常见 20B 限制），否则可能只到半截导致 Cody 端无法解析 '\n' 行结束。
       // BIN：优先走“单次写完整帧”（更快）；若设备/机型不支持再回退分片。
-      const perChunkDelayMs = kind === "json" ? 6 : 0;
-      const wantNoResp = (kind === "bin") && !!this.state.rxWriteNoResp;
+      // draw_stroke 等高频命令可传 interChunkDelayMs: 0 降低跟笔延迟；默认 6ms 偏保守。
+      let perChunkDelayMs = 0;
+      if (kind === "json") {
+        perChunkDelayMs =
+          opts && typeof opts.interChunkDelayMs === "number" ? opts.interChunkDelayMs : 6;
+      }
+      const jsonFast =
+        kind === "json" && opts && opts.writeNoResponse && !!this.state.rxWriteNoResp;
+      const wantNoResp =
+        !!this.state.rxWriteNoResp &&
+        (kind === "bin" || jsonFast);
       const canWriteType = !!(wx.canIUse && wx.canIUse("writeBLECharacteristicValue.writeType"));
 
       const writeOnce = async (part) => {
@@ -550,12 +568,48 @@ export class BleCodyClient {
     return this._writeQ;
   }
 
-  async sendJson(obj) {
+  /**
+   * 手绘线段：二进制单帧（~16B），优先于 JSON draw_stroke，减少分片与解析开销。
+   */
+  async sendHanddrawStrokeBin(seg) {
+    const x0 = Number(seg.x0) || 0;
+    const y0 = Number(seg.y0) || 0;
+    const x1 = Number(seg.x1) || 0;
+    const y1 = Number(seg.y1) || 0;
+    const c = Number(seg.c) & 0xffff;
+    const w = Number(seg.w) || 4;
+    const pl = buildHanddrawStrokePayload(x0, y0, x1, y1, c, w);
+    const { session, seq } = this.nextSessionSeq();
+    const frame = buildFrame(FrameType.HanddrawStroke, session, seq, pl);
+    await this.write(frame, { kind: "bin" });
+  }
+
+  /** 多段合并一帧，减少 write 次数与主机调度延迟 */
+  async sendHanddrawStrokeBatchBin(segs) {
+    const list = Array.isArray(segs) ? segs : [];
+    if (!list.length) return;
+    if (list.length === 1) {
+      return this.sendHanddrawStrokeBin(list[0]);
+    }
+    const pl = buildHanddrawStrokeBatchPayload(list);
+    const { session, seq } = this.nextSessionSeq();
+    const frame = buildFrame(FrameType.HanddrawStrokeBatch, session, seq, pl);
+    await this.write(frame, { kind: "bin" });
+  }
+
+  async sendJson(obj, opts) {
     const line = JSON.stringify(obj) + "\n";
     try {
       this.log("[tx json] " + line.trimEnd());
     } catch (_) {}
-    await this.write(utf8Encode(line), { kind: "json" });
+    const wopts = { kind: "json" };
+    if (opts && typeof opts.interChunkDelayMs === "number") {
+      wopts.interChunkDelayMs = opts.interChunkDelayMs;
+    }
+    if (opts && opts.writeNoResponse) {
+      wopts.writeNoResponse = true;
+    }
+    await this.write(utf8Encode(line), wopts);
   }
 
   async sendJsonStopAndWait(obj, opts) {

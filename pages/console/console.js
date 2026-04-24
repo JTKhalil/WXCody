@@ -2,11 +2,23 @@ import { ble } from "../../services/ble";
 import { FrameType } from "../../services/proto_bin";
 
 const IMG_BYTES = 240 * 240 * 2;
+/** 控制台底部 Tab：手绘、设置（与设备 displayMode 无关） */
+const TAB_HANDDRAW = 3;
+const TAB_SETTINGS = 4;
 // 提速：固件端二进制帧总长度上限为 180B（含头+CRC），当前 ImgPushChunk 负载含 1(slot)+4(off)+data，
 // 因此 data 的安全上限约为 180-9(帧开销)-5(字段)=166B。
 const CHUNK_BYTES = 166;
+/** 手绘 BLE：攒够即发，降低屏相对手机的延迟（过小会增加空口包数） */
+const HD_BLE_BATCH_IMMEDIATE = 3;
+const HD_BLE_BATCH_DEBOUNCE_MS = 1;
 
 const THUMB_CACHE_PREFIX = "wxcody_thumb_rgb565_slot_";
+
+function handdrawCachePath(deviceId) {
+  const id = String(deviceId || "unknown").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80);
+  const root = (typeof wx !== "undefined" && wx.env && wx.env.USER_DATA_PATH) ? wx.env.USER_DATA_PATH : "";
+  return `${root}/wxcody_handdraw_${id}.bin`;
+}
 
 const UPDATE_VERSION_URL = "https://raw.githubusercontent.com/JTKhalil/claudeRobot/main/version.txt";
 const UPDATE_FIRMWARE_URL = "https://raw.githubusercontent.com/JTKhalil/claudeRobot/main/firmware.bin";
@@ -21,6 +33,23 @@ function concat(a, b) {
   out.set(a, 0);
   out.set(b, a.length);
   return out;
+}
+
+function hexToRgb565(hex) {
+  const h = String(hex || "").replace("#", "").trim();
+  if (h.length !== 6) return 0;
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  if (![r, g, b].every((n) => Number.isFinite(n))) return 0;
+  return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
+}
+
+function clampHanddrawXY(x, y) {
+  return {
+    x: Math.max(0, Math.min(239, Math.floor(x))),
+    y: Math.max(0, Math.min(239, Math.floor(y))),
+  };
 }
 
 function parseVersionText(text) {
@@ -234,6 +263,85 @@ function imageDataToRgb565(imageData) {
   return out;
 }
 
+function hexStringToBytes(hex) {
+  const s = String(hex || "").trim();
+  if (!s.length || s.length % 2 !== 0) return null;
+  const out = new Uint8Array(s.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    const v = parseInt(s.substr(i * 2, 2), 16);
+    out[i] = Number.isFinite(v) ? v : 0;
+  }
+  return out;
+}
+
+function putRgb565BufferOnCanvas(c2d, bytes) {
+  if (!c2d || !bytes || bytes.length < IMG_BYTES) return;
+  const imageData = c2d.createImageData(240, 240);
+  rgb565ToImageData(bytes, imageData);
+  c2d.putImageData(imageData, 0, 0);
+}
+
+function makeSolidHanddrawRgb565(bgKey) {
+  const u8 = new Uint8Array(IMG_BYTES);
+  const bg565 = bgKey === "white" ? 0xffff : 0;
+  for (let i = 0; i < IMG_BYTES; i += 2) {
+    u8[i] = bg565 & 0xff;
+    u8[i + 1] = (bg565 >> 8) & 0xff;
+  }
+  return u8;
+}
+
+/** 与固件 handdraw 相同的圆盘笔刷 + Bresenham，写入 RGB565 小端缓冲 */
+function handdrawRgb565ApplySegment(bytes, x0, y0, x1, y1, rgb565, widthPx) {
+  const kW = 240;
+  const kH = 240;
+  let wp = Math.max(1, Math.min(24, Number(widthPx) || 4));
+  let r = Math.floor(wp / 2);
+  if (r < 1) r = 1;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  x0 = clamp(Math.floor(x0), 0, kW - 1);
+  y0 = clamp(Math.floor(y0), 0, kH - 1);
+  x1 = clamp(Math.floor(x1), 0, kW - 1);
+  y1 = clamp(Math.floor(y1), 0, kH - 1);
+
+  const plotDisk = (cx, cy, rad, c) => {
+    for (let py = cy - rad; py <= cy + rad; py++) {
+      if (py < 0 || py >= kH) continue;
+      for (let px = cx - rad; px <= cx + rad; px++) {
+        if (px < 0 || px >= kW) continue;
+        const dx = px - cx;
+        const dy = py - cy;
+        if (dx * dx + dy * dy <= rad * rad) {
+          const o = (py * kW + px) * 2;
+          bytes[o] = c & 0xff;
+          bytes[o + 1] = (c >> 8) & 0xff;
+        }
+      }
+    }
+  };
+
+  let dx = Math.abs(x1 - x0);
+  let dy = Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1;
+  const sy = y0 < y1 ? 1 : -1;
+  let err = dx - dy;
+  let x = x0;
+  let y = y0;
+  for (;;) {
+    plotDisk(x, y, r, rgb565);
+    if (x === x1 && y === y1) break;
+    const e2 = 2 * err;
+    if (e2 > -dy) {
+      err -= dy;
+      x += sx;
+    }
+    if (e2 < dx) {
+      err += dx;
+      y += sy;
+    }
+  }
+}
+
 Page({
   data: {
     // header
@@ -284,6 +392,18 @@ Page({
     fwStatus: "",
     brightness: 255,
 
+    hdPenHex: "#ffffff",
+    hdStrokeW: 4,
+    hdBg: "black",
+    hdPalette: ["#000000", "#ffffff", "#e74c3c", "#3498db", "#2ecc71", "#f1c40f", "#9b59b6", "#e67e22"],
+    hdPulling: false,
+    hdPullPercent: 0,
+    /** 清屏进行中：设备与本地画板同步完成前显示遮罩 */
+    hdClearing: false,
+    /** Cody 非手绘模式时盖住画板并禁止绘画 */
+    hdDrawBlocked: false,
+    hdDrawBlockMsg: "",
+
     confirmOpen: false,
     confirmMsg: "",
   },
@@ -307,6 +427,17 @@ Page({
   _disconnectRedirecting: false,
   _tabLoaded: null,
   _cancelUploadSlots: null,
+  _hdCtx: null,
+  _hdLast: null,
+  _handdrawBleReady: false,
+  /** 手绘 BLE 写入链，用于清屏/切模式前等待发完 */
+  _hdBleSendChain: null,
+  /** 与 Cody 一致的 240×240 RGB565 缓存；切换 Tab 保留 */
+  _hdRgb565Cache: null,
+  _hdPersistT: 0,
+  _hdModePollId: 0,
+  _hdBleBatch: null,
+  _hdBleBatchTimer: 0,
 
   onLoad() {
     this._slotsCache = (this.data.slots || []).map((s) => ({ ...s }));
@@ -319,6 +450,7 @@ Page({
     unsubs.push(ble.onConnectionStateChange((connected) => {
       this.syncState();
       this.setData({ status: connected ? "已连接" : "已断开" });
+      if (!connected) this._stopHanddrawModePoll();
       this.scheduleUiRefresh(true);
       // 断线时不再保持 modal
       if (!connected) this.setData({ confirmOpen: false });
@@ -342,7 +474,7 @@ Page({
 
     this.syncState();
     this._loadCodyName();
-    this._tabLoaded = { 0: false, 1: false, 2: false, 3: false };
+    this._tabLoaded = { 0: false, 1: false, 2: false, 3: false, 4: false };
     // 关键：从 connect 页跳转进来时，BLE 可能已经处于 connected 状态，但不会再触发一次 onConnectionStateChange(true)。
     // 这种情况下需要在进入控制台页时主动同步一次时间，否则要等用户切 tab 才会触发同步。
     if (ble.state.connected) {
@@ -469,7 +601,19 @@ Page({
       try { this._galleryFrameUnsub(); } catch (_) {}
       this._galleryFrameUnsub = null;
     }
+    if (this._hdPersistT) {
+      try { clearTimeout(this._hdPersistT); } catch (_) {}
+      this._hdPersistT = 0;
+    }
+    if (this._hdBleBatchTimer) {
+      try { clearTimeout(this._hdBleBatchTimer); } catch (_) {}
+      this._hdBleBatchTimer = 0;
+    }
+    this._hdBleBatch = null;
+    this._stopHanddrawModePoll();
     this._workCtx = null;
+    this._hdCtx = null;
+    this._hdLast = null;
     const unsubs = this._unsubs || [];
     for (const u of unsubs) {
       try { u(); } catch (_) {}
@@ -533,8 +677,21 @@ Page({
 
   async onTab(evt) {
     const tab = Number((evt && evt.currentTarget && evt.currentTarget.dataset && evt.currentTarget.dataset.tab) || 0);
+    const prevTab = Number(this.data.activeTab);
+    if (ble.state.connected && prevTab === TAB_HANDDRAW && tab !== TAB_HANDDRAW) {
+      try {
+        await this._awaitHanddrawBleIdle();
+      } catch (_) {}
+    }
+    if (tab === TAB_HANDDRAW) {
+      this._startHanddrawModePoll();
+    } else {
+      this._stopHanddrawModePoll();
+    }
     // 只 setData 一次，避免切换时 UI 不稳定
-    this.setData({ activeTab: tab, status: "切换 Tab -> " + tab });
+    this.setData({ activeTab: tab, status: "切换 Tab -> " + tab }, () => {
+      this._updateHanddrawBlockState();
+    });
     if (this.data.showDebug) ble.log("UI tab -> " + tab);
 
     // 默认策略：仅“首次进入该 tab”时刷新，后续切换不重复拉取（避免卡顿/流量浪费）。
@@ -551,6 +708,9 @@ Page({
           if (Number(this.data.activeTab) !== 1) return;
           this._ensureThumbFromCacheOrPull().catch(() => {});
         }, 120);
+      }
+      if (tab === TAB_HANDDRAW) {
+        await this._quickRefreshHanddrawTab();
       }
       return;
     }
@@ -570,12 +730,448 @@ Page({
         await this.onRefreshImageInfo();
       } else if (tab === 2) {
         await this.onRefreshNotes();
-      } else if (tab === 3) {
+      } else if (tab === TAB_HANDDRAW) {
+        await this._enterHanddrawTab(tab);
+      } else if (tab === TAB_SETTINGS) {
         await this.onRefreshFs();
         await this.onCheckUpdate();
       }
     } catch (_) {}
     if (this._tabLoaded) this._tabLoaded[tab] = true;
+    this.scheduleUiRefresh(true);
+  },
+
+  async _syncHanddrawStatus() {
+    try {
+      const r = await ble.sendJsonStopAndWait({ cmd: "handdraw_status" }, { timeoutMs: 1500, retries: 2 });
+      if (r && r.status === "ok") {
+        const bg = r.bg === "white" ? "white" : "black";
+        const hasArt = !!r.bg_locked;
+        this.setData({ hdBg: bg });
+        return { bg, hasArt };
+      }
+    } catch (e) {
+      ble.log("handdraw_status FAIL: " + ((e && e.message) || String(e)));
+    }
+    return null;
+  },
+
+  /** 不依赖手绘模式；用于首屏决策（背景、是否有稿） */
+  async _syncHanddrawMeta() {
+    try {
+      const r = await ble.sendJsonStopAndWait({ cmd: "handdraw_meta" }, { timeoutMs: 1200, retries: 2 });
+      if (r && r.status === "ok") {
+        const bg = r.bg === "white" ? "white" : "black";
+        const hasArt = !!r.has_art;
+        this.setData({ hdBg: bg });
+        return { bg, hasArt };
+      }
+    } catch (e) {
+      ble.log("handdraw_meta FAIL: " + ((e && e.message) || String(e)));
+    }
+    return null;
+  },
+
+  _loadHanddrawFromDisk() {
+    const deviceId = String((ble.state.deviceId || this.data.deviceId || "").trim());
+    if (!deviceId) return null;
+    try {
+      const fs = wx.getFileSystemManager();
+      const path = handdrawCachePath(deviceId);
+      const res = fs.readFileSync(path);
+      const ab = res && res.data !== undefined ? res.data : res;
+      if (!ab || (typeof ab.byteLength !== "number")) return null;
+      const u8 = new Uint8Array(ab);
+      if (u8.length !== IMG_BYTES) return null;
+      return u8;
+    } catch (_) {
+      return null;
+    }
+  },
+
+  _saveHanddrawToDisk() {
+    const bytes = this._hdRgb565Cache;
+    const deviceId = String((ble.state.deviceId || this.data.deviceId || "").trim());
+    if (!(bytes instanceof Uint8Array) || bytes.length !== IMG_BYTES || !deviceId) return;
+    try {
+      const fs = wx.getFileSystemManager();
+      const path = handdrawCachePath(deviceId);
+      const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      fs.writeFileSync(path, ab);
+    } catch (e) {
+      try {
+        ble.log("handdraw cache save: " + ((e && e.errMsg) || (e && e.message) || String(e)));
+      } catch (_) {}
+    }
+  },
+
+  _removeHanddrawDiskCache() {
+    const deviceId = String((ble.state.deviceId || this.data.deviceId || "").trim());
+    if (!deviceId) return;
+    try {
+      const fs = wx.getFileSystemManager();
+      fs.unlinkSync(handdrawCachePath(deviceId));
+    } catch (_) {
+      /* 不存在则忽略 */
+    }
+  },
+
+  _scheduleHanddrawPersist() {
+    if (this._hdPersistT) {
+      try {
+        clearTimeout(this._hdPersistT);
+      } catch (_) {}
+      this._hdPersistT = 0;
+    }
+    this._hdPersistT = setTimeout(() => {
+      this._hdPersistT = 0;
+      this._saveHanddrawToDisk();
+    }, 380);
+  },
+
+  _flushHanddrawPersist() {
+    if (this._hdPersistT) {
+      try {
+        clearTimeout(this._hdPersistT);
+      } catch (_) {}
+      this._hdPersistT = 0;
+    }
+    this._saveHanddrawToDisk();
+  },
+
+  _updateHanddrawBlockState() {
+    const tab = Number(this.data.activeTab);
+    const m = Number(this.data.modeCurrent);
+    const connected = !!ble.state.connected;
+    const blocked = connected && tab === TAB_HANDDRAW && Number.isFinite(m) && m >= 0 && m !== 4;
+    const msg =
+      "Cody 当前不是手绘模式，画板已锁定。请先在「模式」中切换为「手绘模式」，或在设备上切至手绘后再绘画。";
+    if (this.data.hdDrawBlocked !== blocked || this.data.hdDrawBlockMsg !== msg) {
+      this.setData({ hdDrawBlocked: blocked, hdDrawBlockMsg: msg });
+    }
+  },
+
+  /** 与 hdDrawBlocked 一致；未同步到 mode 前（modeCurrent&lt;0）不拦截，避免首屏误锁 */
+  _isHanddrawPaintBlocked() {
+    if (Number(this.data.activeTab) !== TAB_HANDDRAW) return false;
+    if (!ble.state.connected) return true;
+    const m = Number(this.data.modeCurrent);
+    if (!Number.isFinite(m) || m < 0) return false;
+    return m !== 4;
+  },
+
+  _stopHanddrawModePoll() {
+    if (this._hdModePollId) {
+      try {
+        clearInterval(this._hdModePollId);
+      } catch (_) {}
+      this._hdModePollId = 0;
+    }
+  },
+
+  _startHanddrawModePoll() {
+    if (this._hdModePollId) return;
+    const tick = async () => {
+      if (Number(this.data.activeTab) !== TAB_HANDDRAW || !ble.state.connected) return;
+      try {
+        const r = await ble.sendJsonStopAndWait({ cmd: "get_mode" }, { timeoutMs: 700, retries: 1 });
+        const m = Number(r && r.mode);
+        if (Number.isFinite(m) && m !== Number(this.data.modeCurrent)) {
+          this.setData({ modeCurrent: m }, () => this._updateHanddrawBlockState());
+        } else {
+          this._updateHanddrawBlockState();
+        }
+      } catch (_) {
+        this._updateHanddrawBlockState();
+      }
+    };
+    this._hdModePollId = setInterval(tick, 2200);
+    tick();
+  },
+
+  /**
+   * 再次进入手绘 Tab：不重拉 meta/整图，优先用缓存同步重绘画布（不主动 set_mode，由用户在设备或「模式」里切手绘）。
+   */
+  async _quickRefreshHanddrawTab() {
+    const cacheOk = this._hdRgb565Cache instanceof Uint8Array && this._hdRgb565Cache.length === IMG_BYTES;
+    if (!cacheOk) {
+      await this._enterHanddrawTab(TAB_HANDDRAW);
+      return;
+    }
+    try {
+      const pack = this._hdCtx && this._hdCtx.canvasDraw;
+      const c2d = pack && pack.ctx;
+      if (c2d) {
+        putRgb565BufferOnCanvas(c2d, this._hdRgb565Cache);
+      } else {
+        await this._attachHanddrawCanvasAndPaint(this._hdRgb565Cache, TAB_HANDDRAW);
+      }
+    } catch (_) {
+      await this._attachHanddrawCanvasAndPaint(this._hdRgb565Cache, TAB_HANDDRAW);
+    }
+    this._handdrawBleReady = true;
+    this._syncHanddrawStatus().catch(() => {});
+    try {
+      const r = await ble.sendJsonStopAndWait({ cmd: "get_mode" }, { timeoutMs: 800, retries: 1 });
+      const m = Number(r && r.mode);
+      if (Number.isFinite(m)) this.setData({ modeCurrent: m }, () => this._updateHanddrawBlockState());
+      else this._updateHanddrawBlockState();
+    } catch (_) {
+      this._updateHanddrawBlockState();
+    }
+  },
+
+  async _enterHanddrawTab(tab) {
+    this._handdrawBleReady = false;
+    const tabNum = Number(tab);
+    if (tabNum !== TAB_HANDDRAW) return;
+
+    this.setData({ hdPulling: false, hdPullPercent: 0 });
+
+    const meta = await this._syncHanddrawMeta();
+    let bgKey = "black";
+    let deviceHasArt = false;
+    if (meta) {
+      bgKey = meta.bg;
+      deviceHasArt = !!meta.hasArt;
+    } else {
+      bgKey = "black";
+      deviceHasArt = false;
+    }
+
+    const memValid = this._hdRgb565Cache instanceof Uint8Array && this._hdRgb565Cache.length === IMG_BYTES;
+    if (!memValid) {
+      const fromDisk = this._loadHanddrawFromDisk();
+      if (fromDisk) this._hdRgb565Cache = fromDisk;
+    }
+
+    const hasLocal = this._hdRgb565Cache instanceof Uint8Array && this._hdRgb565Cache.length === IMG_BYTES;
+
+    if (!deviceHasArt) {
+      this._removeHanddrawDiskCache();
+      this._hdRgb565Cache = makeSolidHanddrawRgb565(bgKey);
+      await this._attachHanddrawCanvasAndPaint(this._hdRgb565Cache, tabNum);
+      this._saveHanddrawToDisk();
+    } else if (hasLocal) {
+      await this._attachHanddrawCanvasAndPaint(this._hdRgb565Cache, tabNum);
+    } else {
+      try {
+        const pulled = await this._pullHanddrawBitmapFromDevice();
+        this._hdRgb565Cache = pulled;
+        await this._attachHanddrawCanvasAndPaint(pulled, tabNum);
+        this._saveHanddrawToDisk();
+      } catch (e) {
+        ble.log("handdraw pull FAIL: " + ((e && e.message) || String(e)));
+        this.setData({ hdPulling: false, hdPullPercent: 0 });
+        this._hdRgb565Cache = makeSolidHanddrawRgb565(bgKey);
+        await this._attachHanddrawCanvasAndPaint(this._hdRgb565Cache, tabNum);
+        this._saveHanddrawToDisk();
+      }
+    }
+
+    this._syncHanddrawStatus().catch(() => {});
+    this._handdrawBleReady = true;
+    try {
+      const r = await ble.sendJsonStopAndWait({ cmd: "get_mode" }, { timeoutMs: 800, retries: 1 });
+      const m = Number(r && r.mode);
+      if (Number.isFinite(m)) this.setData({ modeCurrent: m }, () => this._updateHanddrawBlockState());
+      else this._updateHanddrawBlockState();
+    } catch (_) {
+      this._updateHanddrawBlockState();
+    }
+  },
+
+  async _pullHanddrawBitmapFromDevice() {
+    const chunk = 720;
+    const out = new Uint8Array(IMG_BYTES);
+    let total = 0;
+    this.setData({ hdPulling: true, hdPullPercent: 0 });
+    try {
+      for (let off = 0; off < IMG_BYTES; off += chunk) {
+        const len = Math.min(chunk, IMG_BYTES - off);
+        const r = await ble.sendJsonStopAndWait({ cmd: "handdraw_pull_chunk", off, len }, { timeoutMs: 2500, retries: 2 });
+        if (!r || r.status !== "ok") throw new Error("handdraw_pull_chunk failed");
+        const got = Number(r.len) || 0;
+        if (got === 0) break;
+        const raw = hexStringToBytes(r.data || "");
+        if (!raw || raw.length < got) throw new Error("handdraw_pull bad hex");
+        out.set(raw.subarray(0, got), off);
+        total += got;
+        const pct = Math.min(100, Math.floor((total * 100) / IMG_BYTES));
+        this.setData({ hdPullPercent: pct });
+        if (got < len) break;
+      }
+      if (total !== IMG_BYTES) throw new Error("incomplete handdraw pull " + total + "/" + IMG_BYTES);
+      return out;
+    } finally {
+      this.setData({ hdPulling: false, hdPullPercent: 0 });
+    }
+  },
+
+  async _attachHanddrawCanvasAndPaint(bytes, forTab) {
+    const tab = forTab !== undefined && forTab !== null ? Number(forTab) : Number(this.data.activeTab);
+    if (tab !== TAB_HANDDRAW) return;
+    this._hdCtx = this._hdCtx || {};
+    this._hdLast = this._hdLast || {};
+    this._cancelHdBleBatchTimer();
+    this._hdBleBatch = null;
+    this._hdBleSendChain = Promise.resolve();
+    if (!bytes || bytes.length < IMG_BYTES) return;
+    try {
+      const pack = await getCanvas2dById(this, "canvasDraw", 240);
+      const c2d = pack && pack.ctx;
+      if (c2d) putRgb565BufferOnCanvas(c2d, bytes);
+      this._hdCtx.canvasDraw = pack;
+    } catch (e) {
+      ble.log("handdraw canvas attach FAIL: " + ((e && e.message) || String(e)));
+    }
+  },
+
+  onHdPickColor(e) {
+    const hex = (e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.hex) || "#000000";
+    this.setData({ hdPenHex: String(hex) });
+  },
+
+  onHdStrokeChanging(evt) {
+    const v = Number(evt && evt.detail && evt.detail.value);
+    if (Number.isFinite(v)) this.setData({ hdStrokeW: v });
+  },
+
+  onHdStrokeChange(evt) {
+    const v = Number(evt && evt.detail && evt.detail.value);
+    const value = Math.max(2, Math.min(16, Number.isFinite(v) ? v : 4));
+    this.setData({ hdStrokeW: value });
+  },
+
+  _cancelHdBleBatchTimer() {
+    if (this._hdBleBatchTimer) {
+      try {
+        clearTimeout(this._hdBleBatchTimer);
+      } catch (_) {}
+      this._hdBleBatchTimer = 0;
+    }
+  },
+
+  _flushHdBleBatchNow() {
+    this._cancelHdBleBatchTimer();
+    const batch = this._hdBleBatch;
+    if (!batch || !batch.length) return;
+    this._hdBleBatch = [];
+    const copy = batch.slice();
+    const run = () => {
+      if (typeof ble.sendHanddrawStrokeBatchBin === "function") {
+        return ble.sendHanddrawStrokeBatchBin(copy);
+      }
+      if (typeof ble.sendHanddrawStrokeBin === "function") {
+        let p = Promise.resolve();
+        for (const s of copy) {
+          p = p.then(() => ble.sendHanddrawStrokeBin(s));
+        }
+        return p;
+      }
+      let p = Promise.resolve();
+      for (const s of copy) {
+        const payload = { cmd: "draw_stroke", x0: s.x0, y0: s.y0, x1: s.x1, y1: s.y1, c: s.c, w: s.w };
+        p = p.then(() => ble.sendJson(payload, { interChunkDelayMs: 0, writeNoResponse: true }));
+      }
+      return p;
+    };
+    this._hdBleSendChain = (this._hdBleSendChain || Promise.resolve()).then(run).catch((err) => {
+      ble.log("draw_stroke batch FAIL: " + ((err && err.message) || String(err)));
+    });
+  },
+
+  async _awaitHanddrawBleIdle() {
+    this._flushHdBleBatchNow();
+    await (this._hdBleSendChain || Promise.resolve());
+  },
+
+  onHdTouchStart(e) {
+    if (!ble.state.connected || !this._handdrawBleReady || this._isHanddrawPaintBlocked()) return;
+    const id = "canvasDraw";
+    const t = e.touches && e.touches[0];
+    if (!t) return;
+    if (this._hdBleBatch && this._hdBleBatch.length) {
+      this._flushHdBleBatchNow();
+    }
+    const x = Math.floor(t.x);
+    const y = Math.floor(t.y);
+    if (!this._hdLast) this._hdLast = {};
+    this._hdLast[id] = { x, y };
+  },
+
+  onHdTouchMove(e) {
+    if (!ble.state.connected || !this._handdrawBleReady || this._isHanddrawPaintBlocked()) return;
+    const id = "canvasDraw";
+    const prev = this._hdLast && this._hdLast[id];
+    if (!prev) return;
+    const t = e.touches && e.touches[0];
+    if (!t) return;
+    const x = Math.floor(t.x);
+    const y = Math.floor(t.y);
+    const m0 = clampHanddrawXY(prev.x, prev.y);
+    const m1 = clampHanddrawXY(x, y);
+    if (m0.x === m1.x && m0.y === m1.y) return;
+    const c = hexToRgb565(this.data.hdPenHex);
+    const w = Number(this.data.hdStrokeW) || 4;
+    if (!(this._hdRgb565Cache instanceof Uint8Array) || this._hdRgb565Cache.length !== IMG_BYTES) {
+      this._hdRgb565Cache = makeSolidHanddrawRgb565(this.data.hdBg || "black");
+    }
+    handdrawRgb565ApplySegment(this._hdRgb565Cache, m0.x, m0.y, m1.x, m1.y, c, w);
+    const pack = this._hdCtx && this._hdCtx.canvasDraw;
+    if (pack && pack.ctx) putRgb565BufferOnCanvas(pack.ctx, this._hdRgb565Cache);
+    this._hdBleBatch = this._hdBleBatch || [];
+    if (this._hdBleBatch.length >= 14) {
+      this._flushHdBleBatchNow();
+    }
+    this._hdBleBatch.push({ x0: m0.x, y0: m0.y, x1: m1.x, y1: m1.y, c, w });
+    if (this._hdBleBatch.length >= HD_BLE_BATCH_IMMEDIATE) {
+      this._flushHdBleBatchNow();
+    } else {
+      this._cancelHdBleBatchTimer();
+      this._hdBleBatchTimer = setTimeout(() => {
+        this._hdBleBatchTimer = 0;
+        this._flushHdBleBatchNow();
+      }, HD_BLE_BATCH_DEBOUNCE_MS);
+    }
+    this._scheduleHanddrawPersist();
+    this._hdLast[id] = { x, y };
+  },
+
+  onHdTouchEnd() {
+    const id = "canvasDraw";
+    this._cancelHdBleBatchTimer();
+    this._flushHdBleBatchNow();
+    if (this._hdLast) this._hdLast[id] = null;
+    if (!this._isHanddrawPaintBlocked()) this._flushHanddrawPersist();
+  },
+
+  async onHdClear() {
+    if (!ble.state.connected || this._isHanddrawPaintBlocked()) return;
+    this.setData({ hdClearing: true });
+    try {
+      await this._awaitHanddrawBleIdle();
+    } catch (_) {}
+    this._cancelHdBleBatchTimer();
+    this._hdBleBatch = null;
+    this._hdBleSendChain = Promise.resolve();
+    try {
+      await ble.sendJsonStopAndWait({ cmd: "handdraw_clear" }, { timeoutMs: 1500, retries: 2 });
+      const st = await this._syncHanddrawStatus();
+      const bg = st ? st.bg : this.data.hdBg;
+      if (this._hdLast) this._hdLast.canvasDraw = null;
+      this._hdRgb565Cache = makeSolidHanddrawRgb565(bg);
+      await this._attachHanddrawCanvasAndPaint(this._hdRgb565Cache, TAB_HANDDRAW);
+      this._flushHanddrawPersist();
+      this._handdrawBleReady = true;
+      this.setData({ status: "已清屏（可再换背景）" });
+    } catch (err) {
+      this.setData({ status: "清屏失败（需处于手绘模式）" });
+      ble.log("handdraw_clear FAIL: " + ((err && err.message) || String(err)));
+      this._handdrawBleReady = true;
+    } finally {
+      this.setData({ hdClearing: false });
+    }
     this.scheduleUiRefresh(true);
   },
 
@@ -655,11 +1251,14 @@ Page({
     try {
       const r = await ble.sendJsonStopAndWait({ cmd: "get_mode" }, { timeoutMs: 800, retries: 3 });
       const m = Number(r && r.mode);
-      if (Number.isFinite(m)) this.setData({ modeCurrent: m });
-      this.setData({ status: "模式已刷新" });
+      if (Number.isFinite(m)) {
+        this.setData({ modeCurrent: m, status: "模式已刷新" }, () => this._updateHanddrawBlockState());
+      } else {
+        this.setData({ status: "模式已刷新" }, () => this._updateHanddrawBlockState());
+      }
     } catch (e) {
       ble.log("get_mode FAIL: " + ((e && e.message) || String(e)));
-      this.setData({ status: "刷新模式失败" });
+      this.setData({ status: "刷新模式失败" }, () => this._updateHanddrawBlockState());
     }
     this.scheduleUiRefresh();
   },
@@ -667,13 +1266,24 @@ Page({
   async onSetMode(evt) {
     if (!ble.state.connected) return;
     const mode = Number((evt && evt.currentTarget && evt.currentTarget.dataset && evt.currentTarget.dataset.mode) || 0);
+    const cur = Number(this.data.modeCurrent);
+    if (Number.isFinite(cur) && cur === 4 && mode !== 4) {
+      try {
+        await this._awaitHanddrawBleIdle();
+      } catch (_) {}
+    }
     try {
       const r = await ble.sendJsonStopAndWait({ cmd: "set_mode", mode }, { timeoutMs: 800, retries: 3 });
-      if (r && r.status === "ok") this.setData({ modeCurrent: mode, status: "切换成功" });
-      else this.setData({ status: "切换失败" });
+      if (r && r.status === "ok") {
+        this.setData({ modeCurrent: mode, status: "切换成功" }, () => this._updateHanddrawBlockState());
+      } else if (r && r.msg === "handdraw_transfer_busy") {
+        this.setData({ status: "笔迹同步中，请稍后再切模式" }, () => this._updateHanddrawBlockState());
+      } else {
+        this.setData({ status: "切换失败" }, () => this._updateHanddrawBlockState());
+      }
     } catch (e) {
       ble.log("set_mode FAIL: " + ((e && e.message) || String(e)));
-      this.setData({ status: "切换失败" });
+      this.setData({ status: "切换失败" }, () => this._updateHanddrawBlockState());
     }
     this.scheduleUiRefresh();
   },
