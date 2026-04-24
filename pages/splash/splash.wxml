@@ -1,0 +1,23 @@
+<view class="container">
+  <view class="center">
+    <view class="logo">
+      <view class="head">
+        <view class="antenna"></view>
+        <view class="face">
+          <view class="eye left"></view>
+          <view class="eye right"></view>
+          <view class="mouth"></view>
+        </view>
+      </view>
+      <view class="body">
+        <view class="dot"></view>
+        <view class="dot"></view>
+        <view class="dot"></view>
+      </view>
+    </view>
+
+    <view class="title">Hello Cody</view>
+    <view class="sub" wx:if="{{statusText}}">{{statusText}}</view>
+  </view>
+</view>
+

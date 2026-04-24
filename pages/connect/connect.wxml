@@ -1,0 +1,32 @@
+<view class="container">
+  <view class="card">
+    <view class="mono">当前设备名称</view>
+    <view class="mono" style="margin-top:6px; color:#aaa;">{{deviceName || "-"}}</view>
+  </view>
+
+  <view class="row center" style="margin: 12px 0;">
+    <button class="btn secondary" bindtap="onScanList">扫描附近的 Cody</button>
+  </view>
+
+  <view wx:if="{{scanningUi}}" class="loadingCenter">
+    <loading mode="circular">扫描中...</loading>
+  </view>
+
+  <view class="card" wx:if="{{devices && devices.length}}">
+    <view class="mono">可连接设备（点击名称连接）</view>
+    <view wx:for="{{devices}}" wx:key="deviceId" style="margin-top:10px;">
+      <button class="btn secondary" bindtap="onTapDevice" data-id="{{item.deviceId}}" data-name="{{item.displayName || item.localName || item.name || ''}}">
+        {{item.displayName || item.localName || item.name || item.deviceId}}
+      </button>
+    </view>
+  </view>
+
+  <view wx:if="{{waitingConfirm}}" class="overlay show">
+    <view class="modal">
+      <view class="closeBtn" bindtap="onCloseWaiting">×</view>
+      <view class="mono" style="font-size:14px;">{{waitingText}}</view>
+      <view class="mono" style="margin-top:10px; color:#aaa;">请根据Cody屏幕上出现的提示进行连接</view>
+    </view>
+  </view>
+</view>
+

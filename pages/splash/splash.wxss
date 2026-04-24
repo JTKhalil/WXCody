@@ -1,0 +1,117 @@
+.container {
+  min-height: 100vh;
+  background: #121214;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.title {
+  margin-top: 18px;
+  font-size: 20px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: 0.5px;
+}
+
+.sub {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #aaa;
+}
+
+/* Simple “Claude Code robot” style logo built with views */
+.logo {
+  width: 112px;
+  height: 112px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.head {
+  width: 92px;
+  height: 62px;
+  border-radius: 18px;
+  background: #1c1c1f;
+  border: 1px solid #333;
+  position: relative;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.antenna {
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  width: 18px;
+  height: 18px;
+  margin-left: -9px;
+  border-radius: 999px;
+  background: #2a2a2f;
+  border: 1px solid #3a3a40;
+}
+
+.face {
+  width: 78px;
+  height: 44px;
+  border-radius: 14px;
+  background: #121214;
+  border: 1px solid #2b2b2f;
+  position: relative;
+}
+
+.eye {
+  position: absolute;
+  top: 12px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #7ff2c6;
+  box-shadow: 0 0 10px rgba(127, 242, 198, 0.35);
+}
+.eye.left { left: 18px; }
+.eye.right { right: 18px; }
+
+.mouth {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  width: 26px;
+  height: 6px;
+  margin-left: -13px;
+  border-radius: 999px;
+  background: #2a2a2f;
+  border: 1px solid #3a3a40;
+}
+
+.body {
+  margin-top: 10px;
+  width: 72px;
+  height: 30px;
+  border-radius: 14px;
+  background: #1c1c1f;
+  border: 1px solid #333;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #e67e22;
+}
+

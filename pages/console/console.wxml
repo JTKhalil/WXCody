@@ -1,0 +1,160 @@
+<view class="container">
+  <!-- Tab: Mode -->
+  <view class="card" wx:if="{{activeTab===0}}">
+    <view class="title">模式</view>
+    <view class="modeGrid">
+      <view class="modeBtn mode0 {{modeCurrent===0?'on':''}}" bindtap="onSetMode" data-mode="0">🖼️ 图片模式</view>
+      <view class="modeBtn mode1 {{modeCurrent===1?'on':''}}" bindtap="onSetMode" data-mode="1">⏰ 时钟模式</view>
+      <view class="modeBtn mode2 {{modeCurrent===2?'on':''}}" bindtap="onSetMode" data-mode="2">📝 笔记模式</view>
+      <view class="modeBtn mode3 {{modeCurrent===3?'on':''}}" bindtap="onSetMode" data-mode="3">😊 表情模式</view>
+    </view>
+  </view>
+
+  <!-- Tab: Gallery -->
+  <view class="card galleryFull" hidden="{{activeTab!==1}}">
+    <view class="title">图片轮播</view>
+    <view class="row" style="justify-content:space-between; align-items:center;">
+      <view class="mono">启用轮播</view>
+      <switch checked="{{imgSlideshowEnabled}}" bindchange="onImgSlideshowToggle" />
+    </view>
+    <view class="mono" style="margin-top:10px;">间隔：{{imgInterval}} 秒</view>
+    <slider min="3" max="60" value="{{imgInterval}}" step="1" bindchanging="onImgIntervalChanging" bindchange="onImgIntervalChange" />
+  </view>
+
+  <view class="card galleryFull" hidden="{{activeTab!==1}}">
+    <view class="slots">
+      <view class="slot {{item.hasImage ? 'hasImage' : ''}}" wx:for="{{slots}}" wx:key="slot">
+        <view class="thumb">
+          <canvas id="thumb{{item.slot}}" type="2d" class="thumbCanvas" />
+          <view class="thumbMask" wx:if="{{item.busy}}"></view>
+          <view class="thumbProgress" wx:if="{{item.busy}}">
+            <progress class="pProg" percent="{{item.progressPct}}" stroke-width="6" />
+            <view class="pText">{{item.progressPct}}%</view>
+            <button class="btn secondary smallBtn cancelBtn" wx:if="{{item.status==='pushing...'}}" catchtap="onCancelUpload" data-slot="{{item.slot}}">取消上传</button>
+          </view>
+          <view class="thumbHint" wx:elif="{{!item.hasImage}}">请上传图片</view>
+          <view class="thumbHint" wx:elif="{{!item.previewReady}}"></view>
+          <view class="thumbDel {{uploadLock ? 'disabled' : ''}}" wx:if="{{item.hasImage}}" catchtap="onDeleteImage" data-slot="{{item.slot}}">×</view>
+        </view>
+
+        <view class="row" style="margin-top:10px;">
+          <button class="btn" catchtap="onPush" data-from="btn" data-slot="{{item.slot}}" disabled="{{!connected || item.busy || (uploadLock && uploadingSlot!==item.slot)}}">
+            {{item.hasImage ? "替换" : "上传"}}
+          </button>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- hidden work canvas: keep old preview while resizing -->
+  <canvas id="workCanvas" type="2d" class="workCanvas" />
+
+  <!-- Tab: Notes -->
+  <view class="card" wx:if="{{activeTab===2}}">
+    <view class="title">笔记轮播</view>
+    <view class="row" style="justify-content:space-between; align-items:center;">
+      <view class="mono">启用轮播</view>
+      <switch checked="{{noteSlideshow}}" bindchange="onNoteSlideshowToggle" />
+    </view>
+    <view class="mono" style="margin-top:10px;">间隔：{{noteInterval}} 秒</view>
+    <slider min="3" max="60" value="{{noteInterval}}" step="1" bindchanging="onNoteIntervalChanging" bindchange="onNoteIntervalChange" />
+  </view>
+
+  <view class="card" wx:if="{{activeTab===2}}">
+    <view class="title">{{noteEditIndex>=0 ? "编辑笔记" : "新增笔记"}}</view>
+    <textarea class="input mono" value="{{noteText}}" maxlength="100" placeholder="输入笔记（最多100字）..." bindinput="onNoteTextInput" />
+    <view class="mono small" style="margin-top:6px; text-align:right;">{{noteCharCount}}/100（剩余{{noteCharLeft}}）</view>
+    <view class="row" style="margin-top:10px;">
+      <button class="btn" bindtap="onSaveNote" disabled="{{!connected}}">{{noteEditIndex>=0 ? "保存" : "添加"}}</button>
+    </view>
+  </view>
+
+  <view class="card" wx:if="{{activeTab===2}}">
+    <view class="title">历史笔记</view>
+    <view class="noteItem" wx:for="{{notes}}" wx:key="origIndex">
+      <view class="mono" style="margin-bottom:8px; white-space:pre-wrap;">{{item.content}}</view>
+      <view class="noteFooter">
+        <view class="mono small">{{item.time || ""}}</view>
+        <view class="noteActions">
+          <button class="btn secondary smallBtn" bindtap="onPinNote" data-idx="{{item.origIndex}}" disabled="{{!connected}}">
+            {{notePinnedOrig===item.origIndex ? "取消置顶" : "置顶"}}
+          </button>
+          <button class="btn secondary smallBtn" bindtap="onEditNote" data-idx="{{item.origIndex}}">编辑</button>
+          <button class="btn danger smallBtn" bindtap="onDeleteNote" data-idx="{{item.origIndex}}" disabled="{{!connected}}">删除</button>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- Tab: Settings -->
+  <view class="card" wx:if="{{activeTab===3}}">
+    <view class="title">当前连接</view>
+    <view class="mono">Cody：{{codyName || "-"}}</view>
+    <view class="row" style="margin-top:10px;">
+      <button class="btn secondary" bindtap="onDisconnectBle" disabled="{{!connected}}">断开蓝牙连接</button>
+    </view>
+  </view>
+
+  <view class="card" wx:if="{{activeTab===3}}">
+    <view class="title">存储空间</view>
+    <view class="mono">total: {{fsTotal}} KB</view>
+    <view class="mono">used: {{fsUsed}} KB</view>
+    <view class="mono">free: {{fsFree}} KB</view>
+    <progress percent="{{fsPercent}}" stroke-width="6" />
+    <view class="row" style="margin-top:10px;">
+      <button class="btn secondary" bindtap="onRefreshFs" disabled="{{!connected}}">刷新</button>
+    </view>
+  </view>
+
+  <view class="card" wx:if="{{activeTab===3}}">
+    <view class="title">固件版本</view>
+    <view class="mono">current: {{fwCurrent || "-"}}</view>
+    <view class="mono">latest: {{fwLatest || "-"}}</view>
+    <view class="mono" wx:if="{{fwUpdateAvailable}}" style="margin-top:8px; white-space:pre-wrap;">{{fwNotes}}</view>
+    <view class="mono" wx:elif="{{fwNotes}}" style="margin-top:8px; white-space:pre-wrap; color:#aaa;">{{fwNotes}}</view>
+    <view wx:if="{{fwBusy && fwBusyMode==='upgrade'}}" style="margin-top:14px;">
+      <progress percent="{{fwPercent}}" stroke-width="6" />
+      <view class="mono" style="margin-top:8px; text-align:right; color:#aaa;">{{fwPercent}}%</view>
+    </view>
+    <view class="mono" wx:if="{{fwStatus}}" style="margin-top:8px; color:#aaa;">{{fwStatus}}</view>
+    <view class="row" style="margin-top:10px;">
+      <button class="btn secondary" bindtap="onCheckUpdate" disabled="{{!connected || fwBusy}}">刷新</button>
+      <button class="btn" bindtap="onUpgrade" disabled="{{!connected || fwBusy || !fwUpdateAvailable}}">{{fwUpdateAvailable ? "升级新版本" : "已是最新"}}</button>
+    </view>
+  </view>
+
+  <view class="card" wx:if="{{activeTab===3}}">
+    <view class="title">背光亮度</view>
+    <view class="mono">亮度：{{brightness}}</view>
+    <slider min="0" max="255" value="{{brightness}}" step="1" bindchanging="onBrightnessChanging" bindchange="onBrightnessChange" />
+  </view>
+
+  <view class="card" wx:if="{{activeTab===3}}">
+    <view class="title danger">危险操作</view>
+    <view class="row">
+      <button class="btn danger" bindtap="onAskConfirm" data-action="format_fs" disabled="{{!connected}}">删除Cody上的所有数据</button>
+      <button class="btn secondary" bindtap="onAskConfirm" data-action="reset_system" disabled="{{!connected}}">恢复出厂设置</button>
+    </view>
+  </view>
+
+  <!-- Bottom Tabs -->
+  <view class="tabsBottom">
+    <button class="tabBtn {{activeTab===0?'active':''}}" bindtap="onTab" data-tab="0">模式</button>
+    <button class="tabBtn {{activeTab===1?'active':''}}" bindtap="onTab" data-tab="1">图库</button>
+    <button class="tabBtn {{activeTab===2?'active':''}}" bindtap="onTab" data-tab="2">笔记</button>
+    <button class="tabBtn {{activeTab===3?'active':''}}" bindtap="onTab" data-tab="3">设置</button>
+  </view>
+
+  <!-- Confirm modal -->
+  <view wx:if="{{confirmOpen}}" class="overlay show" catchtap="onCancelConfirm">
+    <view class="modal" catchtap="noop">
+      <view class="modalTitle">系统提示</view>
+      <view class="mono">{{confirmMsg}}</view>
+      <view class="row" style="margin-top:12px;">
+        <button class="btn secondary" bindtap="onCancelConfirm">取消</button>
+        <button class="btn danger" bindtap="onOkConfirm">确定</button>
+      </view>
+    </view>
+  </view>
+</view>
+

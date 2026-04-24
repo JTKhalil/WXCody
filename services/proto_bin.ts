@@ -1,0 +1,134 @@
+import { crc16CcittFalse } from "../utils/crc16";
+
+export const MAGIC0 = 0xc0;
+export const MAGIC1 = 0xde;
+
+export enum FrameType {
+  Ping = 0x01,
+  Ack = 0x7f,
+  ImgPullBegin = 0x10,
+  ImgPullChunk = 0x11,
+  ImgPullFinish = 0x12,
+  ImgPushBegin = 0x13,
+  ImgPushChunk = 0x14,
+  ImgPushFinish = 0x15,
+  OtaBegin = 0x20,
+  OtaChunk = 0x21,
+  OtaFinish = 0x22,
+  OtaStatus = 0x23,
+}
+
+export type Frame = {
+  type: number;
+  session: number;
+  seq: number;
+  payload: Uint8Array;
+};
+
+function le16(v: number): Uint8Array {
+  return new Uint8Array([v & 0xff, (v >> 8) & 0xff]);
+}
+
+function readLe16(bytes: Uint8Array, off: number): number {
+  return (bytes[off] | (bytes[off + 1] << 8)) & 0xffff;
+}
+
+export function buildFrame(type: number, session: number, seq: number, payload?: Uint8Array): Uint8Array {
+  const pl = payload ?? new Uint8Array(0);
+  const len = pl.length & 0xffff;
+  const out = new Uint8Array(2 + 1 + 1 + 1 + 2 + len + 2);
+  let i = 0;
+  out[i++] = MAGIC0;
+  out[i++] = MAGIC1;
+  out[i++] = type & 0xff;
+  out[i++] = session & 0xff;
+  out[i++] = seq & 0xff;
+  out.set(le16(len), i);
+  i += 2;
+  if (len) out.set(pl, i);
+  i += len;
+  const crc = crc16CcittFalse(out.subarray(0, i));
+  out.set(le16(crc), i);
+  return out;
+}
+
+export function buildPing(session: number, seq: number): Uint8Array {
+  return buildFrame(FrameType.Ping, session, seq);
+}
+
+export function buildAck(session: number, seq: number, origType: number, errCode: number): Uint8Array {
+  return buildFrame(FrameType.Ack, session, seq, new Uint8Array([origType & 0xff, errCode & 0xff]));
+}
+
+export function isAckForPingOk(frame: Frame): boolean {
+  if (frame.type !== FrameType.Ack) return false;
+  if (frame.payload.length < 2) return false;
+  const origType = frame.payload[0];
+  const errCode = frame.payload[1];
+  return origType === FrameType.Ping && errCode === 0;
+}
+
+export class FrameParser {
+  private buf: Uint8Array = new Uint8Array(0);
+
+  push(chunk: ArrayBuffer): Frame[] {
+    const incoming = new Uint8Array(chunk);
+    this.buf = concat(this.buf, incoming);
+    return this.drain();
+  }
+
+  private drain(): Frame[] {
+    const out: Frame[] = [];
+    while (this.buf.length > 0) {
+      // Resync to MAGIC.
+      if (!(this.buf.length >= 2 && this.buf[0] === MAGIC0 && this.buf[1] === MAGIC1)) {
+        const idx = findNextStart(this.buf);
+        if (idx < 0) {
+          this.buf = new Uint8Array(0);
+          break;
+        }
+        this.buf = this.buf.subarray(idx);
+        continue;
+      }
+
+      if (this.buf.length < 2 + 5) break; // wait header
+      const type = this.buf[2];
+      const session = this.buf[3];
+      const seq = this.buf[4];
+      const len = readLe16(this.buf, 5);
+      const frameSize = 2 + 1 + 1 + 1 + 2 + len + 2;
+      if (this.buf.length < frameSize) break;
+
+      const gotCrc = readLe16(this.buf, frameSize - 2);
+      const calcCrc = crc16CcittFalse(this.buf.subarray(0, frameSize - 2));
+      if (gotCrc !== calcCrc) {
+        // Drop 1 byte and resync.
+        this.buf = this.buf.subarray(1);
+        continue;
+      }
+
+      const payloadOff = 2 + 1 + 1 + 1 + 2;
+      const payload = this.buf.subarray(payloadOff, payloadOff + len);
+      out.push({ type, session, seq, payload });
+      this.buf = this.buf.subarray(frameSize);
+    }
+    return out;
+  }
+}
+
+function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
+  if (!a.length) return b;
+  if (!b.length) return a;
+  const out = new Uint8Array(a.length + b.length);
+  out.set(a, 0);
+  out.set(b, a.length);
+  return out;
+}
+
+function findNextStart(buf: Uint8Array): number {
+  for (let i = 0; i < buf.length; i++) {
+    if (i + 1 < buf.length && buf[i] === MAGIC0 && buf[i + 1] === MAGIC1) return i;
+  }
+  return -1;
+}
+

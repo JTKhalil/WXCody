@@ -1,0 +1,15 @@
+{
+  "pages": [
+    "pages/splash/splash",
+    "pages/connect/connect",
+    "pages/console/console",
+    "pages/ota/ota",
+    "pages/gallery/gallery"
+  ],
+  "window": {
+    "navigationBarTitleText": "WXCody"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}
+
