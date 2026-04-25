@@ -5,6 +5,12 @@ const IMG_BYTES = 240 * 240 * 2;
 /** 控制台底部 Tab：手绘、设置（与设备 displayMode 无关） */
 const TAB_HANDDRAW = 3;
 const TAB_SETTINGS = 4;
+/** 模式的“设置页”映射到原控制台 tab 内容 */
+const MODE_SETTINGS_TAB_MAP = {
+  0: 1, // 图片模式 -> 图库设置
+  2: 2, // 笔记模式 -> 笔记设置
+  4: 3, // 手绘模式 -> 手绘设置
+};
 // 提速：固件端二进制帧总长度上限为 180B（含头+CRC），当前 ImgPushChunk 负载含 1(slot)+4(off)+data，
 // 因此 data 的安全上限约为 180-9(帧开销)-5(字段)=166B。
 const CHUNK_BYTES = 166;
@@ -14,18 +20,28 @@ const HD_BLE_BATCH_DEBOUNCE_MS = 1;
 
 const THUMB_CACHE_PREFIX = "wxcody_thumb_rgb565_slot_";
 
-/** 你画我猜词库（100 个常见物品，与固件 UTF-8 一致） */
+/** 你画我猜词库（1000 词） */
 const HD_GUESS_WORDS = [
-  "苹果", "香蕉", "橙子", "西瓜", "草莓", "葡萄", "梨", "桃子", "樱桃", "菠萝",
-  "胡萝卜", "西红柿", "黄瓜", "土豆", "茄子", "白菜", "玉米", "辣椒", "洋葱", "南瓜",
-  "猫", "狗", "兔子", "老虎", "狮子", "大象", "熊猫", "猴子", "鸟", "鱼",
-  "汽车", "自行车", "飞机", "船", "火车", "公交车", "摩托车", "直升机", "火箭", "潜艇",
-  "太阳", "月亮", "星星", "云", "雨", "雪", "彩虹", "闪电", "风", "雷",
-  "房子", "学校", "医院", "桥", "塔", "城堡", "帐篷", "窗户", "门", "楼梯",
-  "书", "笔", "书包", "电脑", "手机", "电视", "钟表", "椅子", "桌子", "床",
-  "足球", "篮球", "乒乓球", "羽毛球", "滑雪", "游泳", "风筝", "秋千", "滑梯", "跷跷板",
-  "蛋糕", "冰淇淋", "面包", "饺子", "面条", "米饭", "糖果", "巧克力", "奶茶", "汉堡",
-  "帽子", "鞋子", "袜子", "手套", "围巾", "眼镜", "雨伞", "背包", "裙子", "裤子",
+  // 1. 动物界 (1-100)
+  "狗","猫","猪","牛","羊","马","鸡","鸭","鹅","鱼","虾","蟹","龟","蛇","蛙","鸟","狼","熊","虎","豹","狮","象","鹿","猴","猩猩","狐狸","兔子","老鼠","松鼠","蝙蝠","企鹅","海豹","海豚","鲸鱼","鲨鱼","章鱼","乌贼","海星","海马","水母","蝴蝶","蜜蜂","蚂蚁","苍蝇","蚊子","蟑螂","蜘蛛","蜈蚣","毛毛虫","蜗牛","蚯蚓","螳螂","蜻蜓","蝉","萤火虫","瓢虫","刺猬","袋鼠","考拉","鸭嘴兽","熊猫","孔雀","天鹅","鸽子","老鹰","乌鸦","喜鹊","鹦鹉","啄木鸟","麻雀","燕子","猫头鹰","鸵鸟","火烈鸟","长颈鹿","斑马","骆驼","犀牛","河马","鳄鱼","蜥蜴","变色龙","恐龙","翼龙","剑龙","霸王龙","三叶虫","草泥马","哈士奇","柯基","柴犬","布偶猫","波斯猫","金鱼","锦鲤","大闸蟹","小龙虾","鲍鱼","生蚝","海螺",
+  // 2. 水果蔬菜与植物 (101-200)
+  "苹果","香蕉","梨","桃子","葡萄","西瓜","草莓","橙子","橘子","柚子","柠檬","菠萝","芒果","榴莲","木瓜","椰子","樱桃","蓝莓","猕猴桃","石榴","柿子","无花果","甘蔗","哈密瓜","火龙果","山竹","荔枝","龙眼","白菜","萝卜","土豆","番茄","黄瓜","茄子","辣椒","南瓜","冬瓜","苦瓜","丝瓜","洋葱","大蒜","生姜","大葱","芹菜","韭菜","菠菜","生菜","花菜","西兰花","蘑菇","香菇","金针菇","木耳","海带","紫菜","玉米","红薯","花生","毛豆","豌豆","绿豆","黄豆","红豆","芝麻","葵花籽","核桃","板栗","杏仁","开心果","松子","莲藕","竹笋","芦笋","胡萝卜","香菜","薄荷","玫瑰","百合","菊花","荷花","梅花","桃花","樱花","向日葵","蒲公英","仙人掌","含羞草","枫叶","松树","竹子","柳树","梧桐树","苹果树","葡萄藤","狗尾巴草","多肉植物","芦荟","猪笼草","四叶草","海藻",
+  // 3. 食物与饮品 (201-300)
+  "米饭","面条","馒头","包子","饺子","馄饨","汤圆","油条","豆浆","稀饭","炒饭","炒面","火锅","烧烤","麻辣烫","串串香","汉堡","薯条","炸鸡","披萨","牛排","意面","寿司","刺身","拉面","咖喱","三明治","热狗","甜甜圈","马卡龙","巧克力","冰淇淋","蛋糕","饼干","面包","布丁","果冻","糖果","棒棒糖","棉花糖","薯片","爆米花","辣条","牛肉干","猪肉脯","豆腐","腐竹","粉丝","粉条","米粉","煎饼果子","肉夹馍","凉皮","烤鸭","白切鸡","红烧肉","糖醋排骨","宫保鸡丁","麻婆豆腐","酸菜鱼","水煮肉片","烤鱼","小笼包","生煎包","蛋挞","可乐","雪碧","芬达","果汁","奶茶","咖啡","绿茶","红茶","乌龙茶","菊花茶","牛奶","酸奶","啤酒","红酒","白酒","香槟","鸡尾酒","矿泉水","苏打水","豆奶","凉茶","冰沙","奶昔","冰棒","雪糕","冰淇淋筒","火腿肠","培根","荷包蛋","茶叶蛋","松花蛋","咸鸭蛋","香肠","腊肉","肉丸","鱼丸","虾饺",
+  // 4. 服饰与美妆 (301-400)
+  "衣服","裤子","裙子","衬衫","T恤","毛衣","外套","大衣","羽绒服","风衣","西装","夹克","卫衣","背心","短裤","长裤","牛仔裤","休闲裤","运动裤","连衣裙","半身裙","超短裙","内衣","内裤","袜子","丝袜","棉袜","鞋子","皮鞋","运动鞋","休闲鞋","高跟鞋","凉鞋","拖鞋","靴子","雨鞋","雪地靴","帽子","棒球帽","草帽","毛线帽","头盔","围巾","丝巾","手套","皮带","领带","领结","手表","项链","戒指","耳环","手镯","手链","胸针","发夹","发箍","橡皮筋","梳子","镜子","眼镜","墨镜","隐形眼镜","口罩","雨伞","遮阳伞","包包","背包","单肩包","钱包","行李箱","口红","唇膏","粉底","散粉","眼影","眼线笔","睫毛膏","眉笔","腮红","香水","指甲油","洗面奶","沐浴露","洗发水","护发素","身体乳","防晒霜","面膜","卸妆水","化妆棉","棉签","剃须刀","吹风机","卷发棒","直发梳","假发","纹身","美瞳","高光","修容",
+  // 5. 家具与家电 (401-500)
+  "桌子","椅子","沙发","床","衣柜","书柜","鞋柜","电视柜","茶几","餐桌","办公桌","电脑桌","梳妆台","床头柜","凳子","板凳","吊床","摇椅","书架","衣架","晾衣架","垃圾桶","扫把","拖把","吸尘器","扫地机器人","抹布","水桶","洗脸盆","浴缸","马桶","花洒","水龙头","水槽","燃气灶","抽油烟机","微波炉","烤箱","电饭煲","热水壶","咖啡机","榨汁机","破壁机","洗碗机","消毒柜","冰箱","冷柜","洗衣机","烘干机","电视机","投影仪","音响","麦克风","耳机","路由器","机顶盒","空调","电风扇","暖风机","加湿器","空气净化器","除湿机","台灯","吊灯","壁灯","落地灯","手电筒","插座","排插","开关","电线","电池","遥控器","钟表","闹钟","日历","相框","花瓶","烟灰缸","抱枕","靠垫","被子","枕头","床单","毛毯","地毯","窗帘","百叶窗","纱窗","门铃","锁","钥匙","保险箱","体重秤","温度计","卷尺","剪刀","指甲剪","针线","锤子","螺丝刀","钳子",
+  // 6. 交通与建筑 (501-600)
+  "汽车","自行车","摩托车","电动车","三轮车","公交车","大巴车","出租车","警车","救护车","消防车","卡车","货车","拖拉机","挖掘机","推土机","吊车","叉车","火车","高铁","地铁","轻轨","飞机","直升机","战斗机","客机","火箭","航天飞机","人造卫星","飞碟","热气球","飞艇","降落伞","轮船","游艇","帆船","潜水艇","皮划艇","木筏","航母","滑板","轮滑鞋","滑板车","平衡车","婴儿车","轮椅","马车","高铁站","火车站","地铁站","飞机场","港口","码头","加油站","充电桩","红绿灯","斑马线","路牌","减速带","桥梁","隧道","立交桥","高速公路","铁路","灯塔","风车","水车","城堡","宫殿","别墅","公寓","平房","草茅","帐篷","金字塔","长城","埃菲尔铁塔","自由女神像","天安门","东方明珠","体育场","游泳馆","电影院","游乐园","摩天轮","过山车","旋转木马","海盗船","水族馆","动物园","植物园","博物馆","图书馆","学校","医院","银行","邮局","超市","商场","菜市场","餐厅","咖啡馆",
+  // 7. 职业与人物 (601-700)
+  "警察","小偷","医生","护士","老师","学生","校长","服务员","厨师","理发师","快递员","外卖员","司机","飞行员","空姐","水手","船长","宇航员","科学家","工程师","程序员","设计师","画家","音乐家","歌手","演员","导演","摄影师","模特","记者","主持人","作家","诗人","律师","法官","老板","员工","秘书","会计","保安","保洁","农民","渔民","猎人","矿工","建筑工人","消防员","军人","特种兵","间谍","杀手","侦探","魔术师","小丑","杂技演员","运动员","裁判","教练","健身教练","按摩师","修车工","木匠","铁匠","裁缝","导游","翻译","收银员","售货员","乞丐","流浪汉","国王","王后","王子","公主","骑士","魔法师","女巫","吸血鬼","狼人","丧尸","外星人","机器人","美人鱼","天使","恶魔","神仙","妖怪","玉皇大帝","孙悟空","猪八戒","唐僧","沙和尚","哪吒","葫芦娃","奥特曼","蜘蛛侠","钢铁侠","蝙蝠侠","超人","美国队长",
+  // 8. 科技数码与文具 (701-800)
+  "电脑","笔记本电脑","平板电脑","手机","智能手表","充电宝","数据线","键盘","鼠标","显示器","主机","显卡","主板","内存条","硬盘","U盘","光盘","打印机","扫描仪","复印机","传真机","3D打印机","无人机","单反相机","拍立得","摄像机","镜头","三脚架","望远镜","显微镜","放大镜","指南针","计算器","算盘","试管","烧杯","酒精灯","磁铁","地球仪","黑板","粉笔","黑板擦","白板","马克笔","铅笔","钢笔","圆珠笔","水性笔","毛笔","橡皮擦","修正液","尺子","圆规","量角器","三角板","笔袋","文具盒","书包","书本","字典","报纸","杂志","信封","邮票","明信片","胶水","胶带","订书机","曲别针","大头针","图钉","便签纸","笔记本","日记本","文件夹","档案袋","名片","印章","砚台","墨水","宣纸","字画","代码","芯片","服务器","云端","安卓","Flutter","蓝牙","Wifi","密码","二维码","条形码","指纹","人脸识别","人工智能","蔚来","电瓶","快递箱","伺服电机",
+  // 9. 运动娱乐与自然 (801-900)
+  "篮球","足球","排球","乒乓球","羽毛球","网球","台球","保龄球","高尔夫球","棒球","橄榄球","冰球","水球","铅球","标枪","铁饼","跳高","跳远","跑步","游泳","潜水","冲浪","滑水","滑雪","滑冰","拳击","摔跤","柔道","跆拳道","空手道","击剑","射箭","射击","举重","体操","瑜伽","舞蹈","芭蕾","街舞","广场舞","太极拳","武术","双节棍","平底锅","三级头","三级甲","绝地求生","八倍镜","信号枪","医疗箱","扑克牌","麻将","象棋","围棋","五子棋","飞行棋","跳棋","骰子","积木","拼图","悠悠球","陀螺","风筝","沙包","跳绳","毽子","呼啦圈","滑梯","秋千","跷跷板","太阳","月亮","星星","流星","银河","黑洞","云朵","雨滴","雪花","闪电","彩虹","龙卷风","台风","火山","地震","海啸","瀑布","河流","湖泊","海洋","岛屿","沙漠","绿洲","森林","草原","高山","峡谷","溶洞","冰川","悬崖",
+  // 10. 动作状态与趣味成语 (901-1000)
+  "哭泣","大笑","微笑","生气","发怒","害怕","恐惧","惊讶","害羞","悲伤","睡觉","打呼噜","做梦","起床","洗脸","刷牙","洗澡","吃饭","喝水","咀嚼","吞咽","呕吐","走路","跑步","跳跃","爬行","飞翔","跌倒","攀岩","打架","踢腿","挥手","鼓掌","拥抱","亲吻","握手","鞠躬","下跪","点头","摇头","指引","推拉","搬运","举起","扔掉","捡起","敲门","开锁","关窗","切菜","炒菜","洗碗","扫地","画画","写字","唱歌","跳舞","弹琴","吹笛子","打鼓","拍照","打电话","看书","玩手机","看电视","听音乐","思考","发呆","守株待兔","刻舟求剑","掩耳盗铃","拔苗助长","画蛇添足","对牛弹琴","狐假虎威","井底之蛙","杯弓蛇影","亡羊补牢","盲人摸象","画龙点睛","掩卷沉思","大惊小怪","手舞足蹈","东张西望","鸡飞狗跳","狼吞虎咽","张牙舞爪","抓耳挠腮","眉飞色舞","泪流满面","捧腹大笑","垂头丧气","火冒三丈","目瞪口呆","九牛一毛","一箭双雕","百发百中","三头六臂","五颜六色","七上八下",
 ];
 
 function pickRandomGuessWord() {
@@ -413,8 +429,10 @@ Page({
 
     hdPenHex: "#ffffff",
     hdStrokeW: 4,
+    /** 镜像模式：横向对称绘制 */
+    hdMirror: false,
     hdBg: "black",
-    hdPalette: ["#000000", "#ffffff", "#e74c3c", "#3498db", "#2ecc71", "#f1c40f", "#9b59b6", "#e67e22"],
+    hdPalette: ["#000000", "#ffffff", "#e74c3c", "#3498db", "#2ecc71", "#f1c40f", "#9b59b6"],
     hdPulling: false,
     hdPullPercent: 0,
     /** 清屏进行中：设备与本地画板同步完成前显示遮罩 */
@@ -433,6 +451,11 @@ Page({
 
     confirmOpen: false,
     confirmMsg: "",
+
+    /** 以“模式设置页”方式打开（新页面实例，隐藏底部Tab） */
+    isModeSettingsPage: false,
+    /** 内容未超屏时禁用滚动 */
+    canScroll: false,
   },
 
   // internal
@@ -456,6 +479,7 @@ Page({
   _cancelUploadSlots: null,
   _hdCtx: null,
   _hdLast: null,
+  _hdCanvasCssSize: 0,
   _handdrawBleReady: false,
   /** 手绘 BLE 写入链，用于清屏/切模式前等待发完 */
   _hdBleSendChain: null,
@@ -467,7 +491,13 @@ Page({
   _hdBleBatchTimer: 0,
   _hdGuessTimer: 0,
 
-  onLoad() {
+  onLoad(options) {
+    // 从模式页“设置”按钮打开：作为一个新的页面实例显示指定 tab，并隐藏底部 tabs
+    const isModeSettingsPage = String(options && options.fromModeSettings || "") === "1";
+    const initTab = Number(options && options.tab);
+    let initTitle = String(options && options.title || "");
+    try { initTitle = decodeURIComponent(initTitle); } catch (_) {}
+
     this._slotsCache = (this.data.slots || []).map((s) => ({ ...s }));
     this._thumbCtx = {};
     this._pullQueue = [];
@@ -524,8 +554,19 @@ Page({
     // 不主动刷新 log，避免大量 setData
     // 初次进入：延迟一次轻量刷新，避免刚跳转就并发 discover/write
     setTimeout(() => {
-      this.onRefreshMode().catch(() => {});
-      if (this._tabLoaded) this._tabLoaded[0] = true;
+      if (isModeSettingsPage && Number.isFinite(initTab)) {
+        try {
+          if (initTitle) wx.setNavigationBarTitle({ title: initTitle });
+        } catch (_) {}
+        this.setData({ isModeSettingsPage: true, activeTab: initTab }, () => {
+          this._updateHanddrawBlockState();
+        });
+        // 触发首次加载逻辑（复用 onTab）
+        this.onTab({ currentTarget: { dataset: { tab: initTab } } }).catch(() => {});
+      } else {
+        this.onRefreshMode().catch(() => {});
+        if (this._tabLoaded) this._tabLoaded[0] = true;
+      }
     }, 250);
   },
 
@@ -572,6 +613,7 @@ Page({
   onShow() {
     // 去掉左上角 home 胶囊按钮（微信提供的“返回/主页”按钮）
     try { wx.hideHomeButton(); } catch (_) {}
+    setTimeout(() => this._updateCanScroll(), 80);
   },
 
   async _syncTimeFromPhone() {
@@ -665,7 +707,31 @@ Page({
     this._unsubs = null;
   },
 
-  async onReady() {},
+  async onReady() {
+    setTimeout(() => this._updateCanScroll(), 80);
+  },
+
+  _updateCanScroll() {
+    try {
+      // 手绘模式页禁止页面滑动（避免影响绘画体验）
+      if (Number(this.data.activeTab) === TAB_HANDDRAW) {
+        if (this.data.canScroll) this.setData({ canScroll: false });
+        return;
+      }
+      const sys = wx.getSystemInfoSync();
+      const winH = Number(sys && sys.windowHeight) || 0;
+      if (!winH) return;
+      wx.createSelectorQuery()
+        .in(this)
+        .select(".container")
+        .boundingClientRect((rect) => {
+          const h = Number(rect && rect.height) || 0;
+          const can = h > (winH + 2);
+          if (can !== !!this.data.canScroll) this.setData({ canScroll: can });
+        })
+        .exec();
+    } catch (_) {}
+  },
 
   noop() {},
 
@@ -739,6 +805,7 @@ Page({
     // 只 setData 一次，避免切换时 UI 不稳定
     this.setData({ activeTab: tab, status: "切换 Tab -> " + tab }, () => {
       this._updateHanddrawBlockState();
+      this._updateCanScroll();
     });
     if (this.data.showDebug) ble.log("UI tab -> " + tab);
 
@@ -1103,9 +1170,35 @@ Page({
       const c2d = pack && pack.ctx;
       if (c2d) putRgb565BufferOnCanvas(c2d, bytes);
       this._hdCtx.canvasDraw = pack;
+      // 记录当前画板显示尺寸，用于触摸坐标映射（画布 CSS 可能被放大）
+      this._measureHdCanvasCssSize();
     } catch (e) {
       ble.log("handdraw canvas attach FAIL: " + ((e && e.message) || String(e)));
     }
+  },
+
+  _measureHdCanvasCssSize() {
+    try {
+      wx.createSelectorQuery()
+        .in(this)
+        .select("#canvasDraw")
+        .fields({ size: true })
+        .exec((res) => {
+          const r0 = res && res[0];
+          const w = Number(r0 && r0.width) || 0;
+          const h = Number(r0 && r0.height) || 0;
+          const s = Math.max(w, h);
+          if (s > 0) this._hdCanvasCssSize = s;
+        });
+    } catch (_) {}
+  },
+
+  _mapHdTouchTo240(x, y) {
+    const css = Number(this._hdCanvasCssSize) || 0;
+    if (css > 0) {
+      return { x: (x * 240) / css, y: (y * 240) / css };
+    }
+    return { x, y };
   },
 
   onHdPickColor(e) {
@@ -1122,6 +1215,11 @@ Page({
     const v = Number(evt && evt.detail && evt.detail.value);
     const value = Math.max(2, Math.min(16, Number.isFinite(v) ? v : 4));
     this.setData({ hdStrokeW: value });
+  },
+
+  onHdMirrorToggle(evt) {
+    const v = !!(evt && evt.detail && evt.detail.value);
+    this.setData({ hdMirror: v });
   },
 
   _cancelHdBleBatchTimer() {
@@ -1175,8 +1273,9 @@ Page({
     if (this._hdBleBatch && this._hdBleBatch.length) {
       this._flushHdBleBatchNow();
     }
-    const x = Math.floor(t.x);
-    const y = Math.floor(t.y);
+    const m = this._mapHdTouchTo240(Number(t.x) || 0, Number(t.y) || 0);
+    const x = Math.floor(m.x);
+    const y = Math.floor(m.y);
     if (!this._hdLast) this._hdLast = {};
     this._hdLast[id] = { x, y };
   },
@@ -1188,8 +1287,9 @@ Page({
     if (!prev) return;
     const t = e.touches && e.touches[0];
     if (!t) return;
-    const x = Math.floor(t.x);
-    const y = Math.floor(t.y);
+    const m = this._mapHdTouchTo240(Number(t.x) || 0, Number(t.y) || 0);
+    const x = Math.floor(m.x);
+    const y = Math.floor(m.y);
     const m0 = clampHanddrawXY(prev.x, prev.y);
     const m1 = clampHanddrawXY(x, y);
     if (m0.x === m1.x && m0.y === m1.y) return;
@@ -1199,6 +1299,11 @@ Page({
       this._hdRgb565Cache = makeSolidHanddrawRgb565(this.data.hdBg || "black");
     }
     handdrawRgb565ApplySegment(this._hdRgb565Cache, m0.x, m0.y, m1.x, m1.y, c, w);
+    if (this.data.hdMirror) {
+      const mx0 = 239 - m0.x;
+      const mx1 = 239 - m1.x;
+      handdrawRgb565ApplySegment(this._hdRgb565Cache, mx0, m0.y, mx1, m1.y, c, w);
+    }
     const pack = this._hdCtx && this._hdCtx.canvasDraw;
     if (pack && pack.ctx) putRgb565BufferOnCanvas(pack.ctx, this._hdRgb565Cache);
     this._hdBleBatch = this._hdBleBatch || [];
@@ -1206,6 +1311,11 @@ Page({
       this._flushHdBleBatchNow();
     }
     this._hdBleBatch.push({ x0: m0.x, y0: m0.y, x1: m1.x, y1: m1.y, c, w });
+    if (this.data.hdMirror) {
+      const mx0 = 239 - m0.x;
+      const mx1 = 239 - m1.x;
+      this._hdBleBatch.push({ x0: mx0, y0: m0.y, x1: mx1, y1: m1.y, c, w });
+    }
     if (this._hdBleBatch.length >= HD_BLE_BATCH_IMMEDIATE) {
       this._flushHdBleBatchNow();
     } else {
@@ -1229,6 +1339,24 @@ Page({
 
   async onHdClear() {
     if (!ble.state.connected || this._isHanddrawModeOnlyBlocked()) return;
+    // 二次确认，避免误触清屏（清屏会影响设备端与本地画板）
+    try {
+      await new Promise((resolve, reject) => {
+        wx.showModal({
+          title: "清屏确认",
+          content: "确定要清屏吗？当前画面将被清空。",
+          confirmText: "清屏",
+          cancelText: "取消",
+          success: (res) => {
+            if (res && res.confirm) resolve();
+            else reject(new Error("cancel"));
+          },
+          fail: () => reject(new Error("modal fail")),
+        });
+      });
+    } catch (_) {
+      return;
+    }
     this.setData({ hdClearing: true });
     try {
       await this._awaitHanddrawBleIdle();
@@ -1287,28 +1415,14 @@ Page({
     this.scheduleUiRefresh(true);
   },
 
-  async onHdGuessGame() {
-    if (!ble.state.connected || this._isHanddrawModeOnlyBlocked() || this.data.hdClearing || this.data.hdGuessStarting) return;
-    if (this.data.hdGuessPlaying) {
-      if (this._hdGuessTimer) {
-        try { clearTimeout(this._hdGuessTimer); } catch (_) {}
-        this._hdGuessTimer = 0;
-      }
-      try {
-        await ble.sendJsonStopAndWait({ cmd: "guess_game_end" }, { timeoutMs: 1500, retries: 2 });
-        this.setData({ hdGuessPlaying: false, hdGuessPrompt: "", hdGuessRevealBlock: true });
-      } catch (e) {
-        ble.log("guess_game_end FAIL: " + ((e && e.message) || String(e)));
-        this.setData({ hdGuessPlaying: false, hdGuessPrompt: "" });
-      }
-      this.scheduleUiRefresh(true);
-      return;
-    }
-    const word = pickRandomGuessWord();
-    this.setData({ hdGuessPlaying: true, hdGuessPrompt: word, hdGuessStarting: true, status: "你画我猜进行中" });
+  async _startGuessGameWithWord(word) {
+    const w = String(word || "").trim();
+    if (!w) return;
+    this.setData({ hdGuessPlaying: true, hdGuessPrompt: w, hdGuessStarting: true, status: "你画我猜进行中" });
     try {
       await this._awaitHanddrawBleIdle();
-      await ble.sendJsonStopAndWait({ cmd: "guess_game_start", word, seconds: 180 }, { timeoutMs: 2500, retries: 2 });
+      // 重新开始一局（用于首次开始与“跳过”）
+      await ble.sendJsonStopAndWait({ cmd: "guess_game_start", word: w, seconds: 180 }, { timeoutMs: 2500, retries: 2 });
       const bg = this.data.hdBg || "black";
       this._hdRgb565Cache = makeSolidHanddrawRgb565(bg);
       if (this._hdLast) this._hdLast.canvasDraw = null;
@@ -1336,6 +1450,59 @@ Page({
       try { clearTimeout(this._hdGuessTimer); } catch (_) {}
     }
     this._hdGuessTimer = setTimeout(() => this._onGuessGameTimeout(), 180000);
+  },
+
+  async onHdGuessGame() {
+    if (!ble.state.connected || this._isHanddrawModeOnlyBlocked() || this.data.hdClearing || this.data.hdGuessStarting) return;
+    if (this.data.hdGuessPlaying) {
+      if (this._hdGuessTimer) {
+        try { clearTimeout(this._hdGuessTimer); } catch (_) {}
+        this._hdGuessTimer = 0;
+      }
+      try {
+        await ble.sendJsonStopAndWait({ cmd: "guess_game_end" }, { timeoutMs: 1500, retries: 2 });
+        this.setData({ hdGuessPlaying: false, hdGuessPrompt: "", hdGuessRevealBlock: true });
+      } catch (e) {
+        ble.log("guess_game_end FAIL: " + ((e && e.message) || String(e)));
+        this.setData({ hdGuessPlaying: false, hdGuessPrompt: "" });
+      }
+      this.scheduleUiRefresh(true);
+      return;
+    }
+    await this._startGuessGameWithWord(pickRandomGuessWord());
+    this.scheduleUiRefresh(true);
+  },
+
+  async onHdGuessSkip() {
+    if (!ble.state.connected || this._isHanddrawModeOnlyBlocked() || this.data.hdClearing || this.data.hdGuessStarting) return;
+    if (!this.data.hdGuessPlaying) return;
+    // 二次确认，避免误触跳过导致重置计时与清空画板
+    try {
+      await new Promise((resolve, reject) => {
+        wx.showModal({
+          title: "跳过确认",
+          content: "确定要跳过当前物品吗？将更换下一个并重新计时。",
+          confirmText: "跳过",
+          cancelText: "取消",
+          success: (res) => {
+            if (res && res.confirm) resolve();
+            else reject(new Error("cancel"));
+          },
+          fail: () => reject(new Error("modal fail")),
+        });
+      });
+    } catch (_) {
+      return;
+    }
+    // 先结束当前一局，再用新词重新开始并重置计时
+    try {
+      if (this._hdGuessTimer) {
+        try { clearTimeout(this._hdGuessTimer); } catch (_) {}
+        this._hdGuessTimer = 0;
+      }
+      await ble.sendJsonStopAndWait({ cmd: "guess_game_end" }, { timeoutMs: 1500, retries: 2 });
+    } catch (_) {}
+    await this._startGuessGameWithWord(pickRandomGuessWord());
     this.scheduleUiRefresh(true);
   },
 
@@ -1369,6 +1536,23 @@ Page({
         }
       }
     }, 50);
+  },
+
+  async onOpenModeSettings(evt) {
+    const mode = Number((evt && evt.currentTarget && evt.currentTarget.dataset && evt.currentTarget.dataset.mode) ?? -1);
+    const tab = MODE_SETTINGS_TAB_MAP[mode];
+    if (!Number.isFinite(tab)) {
+      wx.showToast({ title: "功能还未开放", icon: "none" });
+      return;
+    }
+    const title =
+      mode === 0 ? "图片模式" :
+      mode === 1 ? "时钟模式" :
+      mode === 2 ? "笔记模式" :
+      mode === 3 ? "表情模式" :
+      mode === 4 ? "手绘模式" :
+      "模式设置";
+    wx.navigateTo({ url: `/pages/console/console?fromModeSettings=1&tab=${tab}&title=${encodeURIComponent(title)}` });
   },
 
   async onReconnect() {

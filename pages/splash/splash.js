@@ -29,6 +29,8 @@ function withTimeout(promise, ms) {
 Page({
   data: {
     statusText: "",
+    /** 内容未超屏时禁用滚动（闪屏页始终不滚动） */
+    canScroll: false,
   },
 
   _done: false,

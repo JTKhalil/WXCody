@@ -1,20 +1,20 @@
 .container {
   background: #121214;
   min-height: 100vh;
-  padding-bottom: 98px; /* bottom tabs + safe distance */
+  padding-bottom: 112px; /* bottom tabs height */
   overflow-x: hidden; /* 禁止左右滑动/横向滚动 */
 }
 
 .tabsBottom {
   position: fixed;
-  left: 12px;
-  right: 12px;
-  bottom: 12px;
+  left: 0;
+  right: 0;
+  bottom: 0;
   z-index: 100;
   display: flex;
   background: #222;
   border: 1px solid #333;
-  border-radius: 16px;
+  border-radius: 0;
   overflow: hidden;
 }
 
@@ -88,12 +88,12 @@
 .tabBtn {
   flex: 1;
   text-align: center;
-  padding: 14px 2px;
+  padding: 22px 2px;
   color: #888;
   background: #222;
   border: none;
   border-radius: 0;
-  font-size: 11px;
+  font-size: 14px;
   line-height: 1.15;
 }
 
@@ -125,13 +125,41 @@
   gap: 10px;
 }
 
+.modeRow {
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+  align-items: stretch;
+}
+
 .modeBtn {
+  flex: 5 1 0;
   padding: 14px;
   border-radius: 12px;
   background: #2a2a2f;
   border: 2px solid #444;
   color: #eee;
   font-weight: 700;
+}
+
+.modeSettingsBtn {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0 8px;
+  border-radius: 12px;
+  background: #3a3a40;
+  color: #ddd;
+  border: 2px solid #444;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modeSettingsBtn::after {
+  border: none;
 }
 
 .modeBtn.on {
@@ -160,19 +188,28 @@
   letter-spacing: 0.05em;
 }
 
+/* 你画我猜：跳过按钮（样式参考主按钮，但用不同颜色） */
+.btn.hdGuessSkipBtn {
+  background: #3498db;
+}
+
+.btn.hdGuessSkipBtn::after { border: none; }
+
 /* 画板与全屏遮罩均为直角，与设备 240×240 像素对齐 */
 .hdCanvasWrap {
   position: relative;
-  width: 240px;
-  height: 240px;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 1 / 1;
   margin: 0 auto 12px;
   border-radius: 0;
   overflow: hidden;
 }
 
 .hdCanvas {
-  width: 240px;
-  height: 240px;
+  width: 100%;
+  height: 100%;
   display: block;
   border: none;
   border-radius: 0;
@@ -185,8 +222,8 @@
   position: absolute;
   left: 0;
   top: 0;
-  width: 240px;
-  height: 240px;
+  width: 100%;
+  height: 100%;
   box-sizing: border-box;
   padding: 16px 12px;
   background: rgba(0, 0, 0, 0.75);
@@ -234,8 +271,8 @@
   position: absolute;
   left: 0;
   top: 0;
-  width: 240px;
-  height: 240px;
+  width: 100%;
+  height: 100%;
   box-sizing: border-box;
   padding: 14px 12px;
   background: rgba(18, 18, 20, 0.88);
@@ -258,8 +295,8 @@
   position: absolute;
   left: 0;
   top: 0;
-  width: 240px;
-  height: 240px;
+  width: 100%;
+  height: 100%;
   box-sizing: border-box;
   padding: 16px 12px;
   background: rgba(0, 0, 0, 0.78);

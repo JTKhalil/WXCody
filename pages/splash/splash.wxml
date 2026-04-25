@@ -1,3 +1,4 @@
+<scroll-view class="pageScroll" scroll-y="{{canScroll}}" enhanced="{{true}}" bounces="{{false}}" show-scrollbar="{{false}}" scroll-with-animation="{{false}}">
 <view class="container">
   <view class="center">
     <view class="logo">
@@ -20,4 +21,5 @@
     <view class="sub" wx:if="{{statusText}}">{{statusText}}</view>
   </view>
 </view>
+</scroll-view>
 

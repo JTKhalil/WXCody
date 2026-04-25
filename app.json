@@ -7,7 +7,8 @@
     "pages/gallery/gallery"
   ],
   "window": {
-    "navigationBarTitleText": "WXCody"
+    "navigationBarTitleText": "WXCody",
+    "enablePullDownRefresh": false
   },
   "style": "v2",
   "sitemapLocation": "sitemap.json"

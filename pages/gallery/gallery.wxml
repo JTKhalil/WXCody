@@ -1,3 +1,4 @@
+<scroll-view class="pageScroll" scroll-y="{{canScroll}}" enhanced="{{true}}" bounces="{{false}}" show-scrollbar="{{false}}" scroll-with-animation="{{false}}">
 <view class="container">
   <view class="card">
     <view class="row">
@@ -37,4 +38,5 @@
     <view class="mono">{{log}}</view>
   </view>
 </view>
+</scroll-view>
 

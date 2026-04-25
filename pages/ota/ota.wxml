@@ -1,3 +1,4 @@
+<scroll-view class="pageScroll" scroll-y="{{canScroll}}" enhanced="{{true}}" bounces="{{false}}" show-scrollbar="{{false}}" scroll-with-animation="{{false}}">
 <view class="container">
   <view class="card">
     <view class="mono">连接：{{connected ? "OK" : "未连接"}} deviceId: {{deviceId || "-"}}</view>
@@ -31,4 +32,5 @@
     <view class="mono">{{log}}</view>
   </view>
 </view>
+</scroll-view>
 

@@ -2,6 +2,14 @@ page {
   background: #0b0d10;
   color: #e8eef6;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+  /* 禁用 iOS 等平台的滚动回弹（下拉/上滑的橡皮筋动画） */
+  overscroll-behavior-y: none;
+}
+
+.pageScroll {
+  height: 100vh;
+  /* 页面滚动交给 scroll-view，本身不需要回弹 */
+  overscroll-behavior: none;
 }
 
 .container {

@@ -27,6 +27,8 @@ Page({
     busy: false,
     status: "-",
     log: "",
+    /** 内容未超屏时禁用滚动 */
+    canScroll: false,
   },
 
   _uiT: 0,
@@ -43,6 +45,28 @@ Page({
       this.syncState();
       this.scheduleUiRefresh(true);
     });
+    setTimeout(() => this._updateCanScroll(), 80);
+  },
+
+  onReady() {
+    setTimeout(() => this._updateCanScroll(), 80);
+  },
+
+  _updateCanScroll() {
+    try {
+      const sys = wx.getSystemInfoSync();
+      const winH = Number(sys && sys.windowHeight) || 0;
+      if (!winH) return;
+      wx.createSelectorQuery()
+        .in(this)
+        .select(".container")
+        .boundingClientRect((rect) => {
+          const h = Number(rect && rect.height) || 0;
+          const can = h > (winH + 2);
+          if (can !== !!this.data.canScroll) this.setData({ canScroll: can });
+        })
+        .exec();
+    } catch (_) {}
   },
 
   onUrlInput(e) {

@@ -1,5 +1,6 @@
 {
   "navigationBarTitleText": "连接Cody",
-  "usingComponents": {}
+  "usingComponents": {},
+  "disableScroll": true
 }
 

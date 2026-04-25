@@ -1,5 +1,6 @@
 {
   "navigationBarTitleText": "Cody 控制台",
-  "usingComponents": {}
+  "usingComponents": {},
+  "disableScroll": true
 }
 

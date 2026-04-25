@@ -1,5 +1,6 @@
 {
   "navigationBarTitleText": "BLE OTA",
-  "usingComponents": {}
+  "usingComponents": {},
+  "disableScroll": true
 }
 

@@ -1,18 +1,34 @@
+<scroll-view class="pageScroll" scroll-y="{{canScroll}}" enhanced="{{true}}" bounces="{{false}}" show-scrollbar="{{false}}" scroll-with-animation="{{false}}">
 <view class="container">
   <!-- Tab: Mode -->
   <view class="card" wx:if="{{activeTab===0}}">
     <view class="title">模式</view>
     <view class="modeGrid">
-      <view class="modeBtn mode0 {{modeCurrent===0?'on':''}}" bindtap="onSetMode" data-mode="0">🖼️ 图片模式</view>
-      <view class="modeBtn mode1 {{modeCurrent===1?'on':''}}" bindtap="onSetMode" data-mode="1">⏰ 时钟模式</view>
-      <view class="modeBtn mode2 {{modeCurrent===2?'on':''}}" bindtap="onSetMode" data-mode="2">📝 笔记模式</view>
-      <view class="modeBtn mode3 {{modeCurrent===3?'on':''}}" bindtap="onSetMode" data-mode="3">😊 表情模式</view>
-      <view class="modeBtn mode4 {{modeCurrent===4?'on':''}}" bindtap="onSetMode" data-mode="4">✏️ 手绘模式</view>
+      <view class="modeRow">
+        <view class="modeBtn mode0 {{modeCurrent===0?'on':''}}" bindtap="onSetMode" data-mode="0">🖼️ 图片模式</view>
+        <button class="modeSettingsBtn" catchtap="onOpenModeSettings" data-mode="0">⚙️</button>
+      </view>
+      <view class="modeRow">
+        <view class="modeBtn mode1 {{modeCurrent===1?'on':''}}" bindtap="onSetMode" data-mode="1">⏰ 时钟模式</view>
+        <button class="modeSettingsBtn" catchtap="onOpenModeSettings" data-mode="1">⚙️</button>
+      </view>
+      <view class="modeRow">
+        <view class="modeBtn mode2 {{modeCurrent===2?'on':''}}" bindtap="onSetMode" data-mode="2">📝 笔记模式</view>
+        <button class="modeSettingsBtn" catchtap="onOpenModeSettings" data-mode="2">⚙️</button>
+      </view>
+      <view class="modeRow">
+        <view class="modeBtn mode3 {{modeCurrent===3?'on':''}}" bindtap="onSetMode" data-mode="3">😊 表情模式</view>
+        <button class="modeSettingsBtn" catchtap="onOpenModeSettings" data-mode="3">⚙️</button>
+      </view>
+      <view class="modeRow">
+        <view class="modeBtn mode4 {{modeCurrent===4?'on':''}}" bindtap="onSetMode" data-mode="4">✏️ 手绘模式</view>
+        <button class="modeSettingsBtn" catchtap="onOpenModeSettings" data-mode="4">⚙️</button>
+      </view>
     </view>
   </view>
 
   <!-- Tab: Gallery -->
-  <view class="card galleryFull" hidden="{{activeTab!==1}}">
+  <view class="card {{isModeSettingsPage ? '' : 'galleryFull'}}" hidden="{{activeTab!==1}}">
     <view class="title">图片轮播</view>
     <view class="row" style="justify-content:space-between; align-items:center;">
       <view class="mono">启用轮播</view>
@@ -22,7 +38,7 @@
     <slider min="3" max="60" value="{{imgInterval}}" step="1" bindchanging="onImgIntervalChanging" bindchange="onImgIntervalChange" />
   </view>
 
-  <view class="card galleryFull" hidden="{{activeTab!==1}}">
+  <view class="card {{isModeSettingsPage ? '' : 'galleryFull'}}" hidden="{{activeTab!==1}}">
     <view class="slots">
       <view class="slot {{item.hasImage ? 'hasImage' : ''}}" wx:for="{{slots}}" wx:key="slot">
         <view class="thumb">
@@ -89,7 +105,7 @@
 
   <!-- Tab: Handdraw（紧跟笔记；hidden 保留 canvas 节点，避免 wx:if 销毁导致闪断） -->
   <view class="card" hidden="{{activeTab!==3}}">
-    <view class="hdLabel">画板</view>
+    <view class="hdLabel">画板（手绘同步存在延迟属于正常现象）</view>
     <view wx:if="{{hdGuessPlaying && hdGuessPrompt}}" class="hdGuessPrompt mono">{{hdGuessPrompt}}</view>
     <view class="hdCanvasWrap">
       <canvas id="canvasDraw" type="2d" class="hdCanvas" bindtouchstart="onHdTouchStart" catchtouchmove="onHdTouchMove" bindtouchend="onHdTouchEnd" bindtouchcancel="onHdTouchEnd" />
@@ -111,14 +127,21 @@
       </view>
     </view>
     <view class="row" style="margin-bottom:8px; flex-wrap:wrap;">
-      <view class="mono" style="width:100%;margin-bottom:6px;">颜色</view>
+      <view class="mono" style="width:100%;margin-bottom:6px;">画笔颜色</view>
       <view wx:for="{{hdPalette}}" wx:key="*this" class="hdSwatch {{hdPenHex===item?'hdSwatchOn':''}}" style="background:{{item}};" data-hex="{{item}}" bindtap="onHdPickColor" />
     </view>
-    <view class="mono" style="margin-top:8px;">粗细：{{hdStrokeW}} px</view>
+    <view class="mono" style="margin-top:8px;">画笔粗细：{{hdStrokeW}} px</view>
     <slider min="2" max="16" value="{{hdStrokeW}}" step="2" bindchanging="onHdStrokeChanging" bindchange="onHdStrokeChange" />
+    <view class="row" style="justify-content:space-between; align-items:center; margin-top:10px;">
+      <view class="mono">镜像模式</view>
+      <switch checked="{{hdMirror}}" bindchange="onHdMirrorToggle" />
+    </view>
     <view class="row" style="margin-top:12px; flex-wrap:wrap;">
       <button class="btn secondary" bindtap="onHdClear" disabled="{{!connected || hdDrawBlocked || hdClearing}}">清屏</button>
       <button class="btn" bindtap="onHdGuessGame" disabled="{{!connected || hdDrawBlocked || hdClearing || hdGuessStarting}}">{{hdGuessPlaying ? '结束游戏' : '开始你画我猜'}}</button>
+    </view>
+    <view wx:if="{{hdGuessPlaying && hdGuessPrompt}}" class="row" style="margin-top:10px;">
+      <button class="btn hdGuessSkipBtn" bindtap="onHdGuessSkip" disabled="{{!connected || !hdGuessPlaying || hdDrawBlocked || hdClearing || hdGuessStarting}}">跳过</button>
     </view>
   </view>
 
@@ -174,12 +197,9 @@
   </view>
 
   <!-- Bottom Tabs：手绘在笔记后、设置前 -->
-  <view class="tabsBottom">
-    <button class="tabBtn {{activeTab===0?'active':''}}" bindtap="onTab" data-tab="0">模式</button>
-    <button class="tabBtn {{activeTab===1?'active':''}}" bindtap="onTab" data-tab="1">图库</button>
-    <button class="tabBtn {{activeTab===2?'active':''}}" bindtap="onTab" data-tab="2">笔记</button>
-    <button class="tabBtn {{activeTab===3?'active':''}}" bindtap="onTab" data-tab="3">手绘</button>
-    <button class="tabBtn {{activeTab===4?'active':''}}" bindtap="onTab" data-tab="4">设置</button>
+  <view wx:if="{{!isModeSettingsPage}}" class="tabsBottom">
+    <button class="tabBtn {{activeTab===0?'active':''}}" bindtap="onTab" data-tab="0">模式切换</button>
+    <button class="tabBtn {{activeTab===4?'active':''}}" bindtap="onTab" data-tab="4">系统设置</button>
   </view>
 
   <!-- Confirm modal -->
@@ -194,4 +214,5 @@
     </view>
   </view>
 </view>
+</scroll-view>
 
