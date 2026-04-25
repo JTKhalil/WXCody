@@ -1245,19 +1245,26 @@ Page({
       await this._attachHanddrawCanvasAndPaint(this._hdRgb565Cache, TAB_HANDDRAW);
       this._flushHanddrawPersist();
       this._handdrawBleReady = true;
-      if (this._hdGuessTimer) {
+      // 清屏只清画：若本局仍在进行中，不应打断倒计时/结束游戏。
+      // 若处于揭晓阶段，则清屏会清掉答案并解锁绘画。
+      const stillPlaying = !!this.data.hdGuessPlaying;
+      const wasReveal = !!this.data.hdGuessRevealBlock;
+      if (!stillPlaying && this._hdGuessTimer) {
         try {
           clearTimeout(this._hdGuessTimer);
         } catch (_) {}
         this._hdGuessTimer = 0;
       }
-      this.setData({
+      const patch = {
         status: "已清屏（可再换背景）",
-        hdGuessPlaying: false,
-        hdGuessPrompt: "",
         hdGuessStarting: false,
-        hdGuessRevealBlock: false,
-      });
+      };
+      if (wasReveal) {
+        patch.hdGuessRevealBlock = false;
+        patch.hdGuessPlaying = false;
+        patch.hdGuessPrompt = "";
+      }
+      this.setData(patch);
     } catch (err) {
       this.setData({ status: "清屏失败（需处于手绘模式）" });
       ble.log("handdraw_clear FAIL: " + ((err && err.message) || String(err)));
