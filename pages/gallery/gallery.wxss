@@ -1,27 +1,13 @@
 .container {
-  background: #121214;
-  min-height: 100vh;
-  padding-bottom: 24px;
-}
-
-.nav {
-  padding: 18px 12px 10px;
-}
-
-.titleBig {
-  font-size: 22px;
-  font-weight: 800;
-  color: #fff;
+  padding: 14px;
 }
 
 .card {
-  background: #1c1c1f;
-  border: 1px solid #333;
+  background: #1a1a1a;
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 14px;
   padding: 12px;
   margin-bottom: 12px;
-  margin-left: 12px;
-  margin-right: 12px;
 }
 
 .row {
@@ -32,7 +18,7 @@
 }
 
 .btn {
-  background: #e67e22;
+  background: #2d6cff;
   color: #fff;
   font-size: 14px;
   padding: 10px 12px;
@@ -43,10 +29,6 @@
   background: #2a2a2a;
   color: #eee;
   border: 1px solid rgba(255, 255, 255, 0.12);
-}
-
-.btn.danger {
-  background: #e74c3c;
 }
 
 .tag {
@@ -63,20 +45,6 @@
   color: #cfcfcf;
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-.mono.small {
-  font-size: 11px;
-  color: #999;
-  margin-top: 6px;
-}
-
-.sectionTitle {
-  margin: 10px 16px 8px;
-  color: #9aa0a6;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
 }
 
 .title {
@@ -104,13 +72,5 @@
   gap: 8px;
   margin-bottom: 10px;
   align-items: center;
-}
-
-.previewCanvas {
-  width: 240px;
-  height: 240px;
-  border-radius: 14px;
-  background: #111;
-  margin-top: 10px;
 }
 

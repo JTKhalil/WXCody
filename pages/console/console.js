@@ -529,31 +529,6 @@ Page({
     }, 250);
   },
 
-  // ---------------- Navigation (Dashboard) ----------------
-  onGoHanddraw() {
-    try {
-      wx.navigateTo({ url: "/pages/handdraw/handdraw" });
-    } catch (_) {}
-  },
-
-  onGoGallery() {
-    try {
-      wx.navigateTo({ url: "/pages/gallery/gallery" });
-    } catch (_) {}
-  },
-
-  onGoDevice() {
-    try {
-      wx.navigateTo({ url: "/pages/device/device" });
-    } catch (_) {}
-  },
-
-  onGoLogs() {
-    try {
-      wx.navigateTo({ url: "/pages/logs/logs" });
-    } catch (_) {}
-  },
-
   async onCancelUpload(evt) {
     const slot = Number((evt && evt.currentTarget && evt.currentTarget.dataset && evt.currentTarget.dataset.slot) ?? 0);
     if (!Number.isFinite(slot)) return;

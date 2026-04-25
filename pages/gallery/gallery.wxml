@@ -1,44 +1,40 @@
 <view class="container">
-  <view class="nav">
-    <view class="titleBig">图库与管理</view>
-    <view class="mono small">{{connected ? "已连接" : "未连接"}} · {{deviceId || "-"}}</view>
+  <view class="card">
+    <view class="row">
+      <button class="btn secondary" bindtap="onOpenAdapter">打开蓝牙</button>
+      <button class="btn secondary" bindtap="onScanConnect">扫描并连接</button>
+      <button class="btn" bindtap="onPing" disabled="{{!connected}}">PING</button>
+    </view>
+    <view class="mono" style="margin-top:10px;">连接：{{connected ? "OK" : "未连接"}} deviceId: {{deviceId || "-"}}</view>
   </view>
 
-  <view class="sectionTitle">图片轮播</view>
   <view class="card">
-    <view class="row" style="justify-content:space-between; align-items:center;">
-      <view class="mono">启用轮播</view>
-      <switch checked="{{imgSlideshowEnabled}}" bindchange="onImgSlideshowToggle" disabled="{{!connected}}" />
-    </view>
-    <view class="mono" style="margin-top:10px;">间隔：{{imgInterval}} 秒</view>
-    <slider min="3" max="60" value="{{imgInterval}}" step="1" bindchanging="onImgIntervalChanging" bindchange="onImgIntervalChange" disabled="{{!connected}}" />
-    <view class="row" style="margin-top:10px;">
-      <button class="btn secondary" bindtap="onRefreshImgConfig" disabled="{{!connected}}">刷新</button>
-    </view>
-  </view>
-
-  <view class="sectionTitle">槽位</view>
-  <view class="card">
+    <view class="title">槽位</view>
     <view class="slots">
       <view class="slot" wx:for="{{slots}}" wx:key="slot">
         <view class="slotHead">
           <view class="tag">slot{{item.slot}}</view>
           <view class="tag">{{item.status}}</view>
         </view>
-        <view class="row" style="flex-wrap:wrap;">
-          <button class="btn secondary" bindtap="onPull" data-slot="{{item.slot}}" disabled="{{!connected || item.busy}}">拉取预览</button>
-          <button class="btn" bindtap="onPush" data-slot="{{item.slot}}" disabled="{{!connected || item.busy || (uploadLock && uploadingSlot!==item.slot)}}">{{item.hasImage ? "替换" : "上传"}}</button>
-          <button class="btn danger" bindtap="onDeleteImage" data-slot="{{item.slot}}" disabled="{{!connected || item.busy || !item.hasImage}}">删除</button>
-          <button class="btn secondary" wx:if="{{item.status==='pushing...'}}" bindtap="onCancelUpload" data-slot="{{item.slot}}" disabled="{{!connected}}">取消上传</button>
+        <view class="row">
+          <button class="btn secondary" bindtap="onPull" data-slot="{{item.slot}}" disabled="{{!connected}}">拉取预览</button>
+          <button class="btn" bindtap="onPush" data-slot="{{item.slot}}" disabled="{{!connected}}">选择并上传</button>
         </view>
       </view>
     </view>
   </view>
 
-  <view class="sectionTitle">预览</view>
   <view class="card">
-    <view class="mono">slot{{previewSlot}}</view>
-    <canvas id="preview" type="2d" class="previewCanvas" />
+    <view class="title">预览（slot{{previewSlot}}）</view>
+    <canvas id="preview" type="2d" style="width:240px;height:240px;border-radius:10px;background:#111;" />
+  </view>
+
+  <view class="card">
+    <view class="row" style="margin-bottom:10px;">
+      <button class="btn secondary" bindtap="onCopyLogs">复制日志</button>
+      <button class="btn secondary" bindtap="onClearLogs">清空日志</button>
+    </view>
+    <view class="mono">{{log}}</view>
   </view>
 </view>
 
