@@ -1,0 +1,211 @@
+.container {
+  background: #121214;
+  min-height: 100vh;
+  padding-bottom: 24px;
+}
+
+.nav {
+  padding: 18px 12px 10px;
+}
+
+.title {
+  font-size: 22px;
+  font-weight: 800;
+  color: #fff;
+}
+
+.mono {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  color: #ddd;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.mono.small {
+  font-size: 11px;
+  color: #999;
+  margin-top: 6px;
+}
+
+.row {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.btn {
+  background: #e67e22;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.btn.secondary {
+  background: #3a3a40;
+}
+
+/* 画板与遮罩直角 */
+.hdCanvasWrap {
+  position: relative;
+  width: 240px;
+  height: 240px;
+  margin: 0 auto;
+  border-radius: 0;
+  overflow: hidden;
+}
+
+.hdCanvas {
+  width: 240px;
+  height: 240px;
+  display: block;
+  border: none;
+  border-radius: 0;
+  background: #000;
+  touch-action: none;
+  vertical-align: top;
+}
+
+.hdPullOverlay {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 240px;
+  height: 240px;
+  box-sizing: border-box;
+  padding: 16px 12px;
+  background: rgba(0, 0, 0, 0.75);
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+
+.hdPullTitle {
+  color: #eee;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 14px;
+  text-align: center;
+}
+
+.hdPullBarTrack {
+  width: 200px;
+  height: 8px;
+  border-radius: 0;
+  background: #333;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.hdPullBarFill {
+  height: 100%;
+  border-radius: 0;
+  background: #e67e22;
+  width: 0%;
+  transition: width 0.12s ease-out;
+}
+
+.hdPullPct {
+  color: #aaa;
+  font-size: 12px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+
+.hdModeBlockOverlay {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 240px;
+  height: 240px;
+  box-sizing: border-box;
+  padding: 14px 12px;
+  background: rgba(18, 18, 20, 0.88);
+  border: 1px solid #5d4a32;
+  border-radius: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 4;
+}
+
+.hdModeBlockText {
+  color: #f0e6d8;
+  font-size: 12px;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.hdClearOverlay {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 240px;
+  height: 240px;
+  box-sizing: border-box;
+  padding: 16px 12px;
+  background: rgba(0, 0, 0, 0.78);
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 5;
+}
+
+.hdClearOverlay loading {
+  color: #eee;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.hdGuessStartOverlay {
+  z-index: 6;
+}
+
+.guessWord {
+  margin: 12px 12px 0;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 700;
+  color: #e67e22;
+}
+
+.toolCard {
+  background: #1c1c1f;
+  border: 1px solid #333;
+  border-radius: 14px;
+  padding: 12px;
+  margin: 12px;
+}
+
+.toolTitle {
+  font-size: 14px;
+  font-weight: 800;
+  color: #fff;
+  margin-bottom: 10px;
+}
+
+.hdSwatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 2px solid #444;
+  margin-right: 8px;
+  margin-bottom: 8px;
+  box-sizing: border-box;
+}
+
+.hdSwatchOn {
+  border-color: #e67e22;
+  box-shadow: 0 0 0 2px rgba(230, 126, 34, 0.35);
+}
+

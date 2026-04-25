@@ -69,10 +69,17 @@ Page({
     deviceId: "",
     previewSlot: 0,
     slots: [
-      { slot: 0, status: "-" },
-      { slot: 1, status: "-" },
-      { slot: 2, status: "-" },
+      { slot: 0, status: "-", hasImage: false, busy: false },
+      { slot: 1, status: "-", hasImage: false, busy: false },
+      { slot: 2, status: "-", hasImage: false, busy: false },
+      { slot: 3, status: "-", hasImage: false, busy: false },
+      { slot: 4, status: "-", hasImage: false, busy: false },
+      { slot: 5, status: "-", hasImage: false, busy: false },
     ],
+    uploadLock: false,
+    uploadingSlot: -1,
+    imgSlideshowEnabled: false,
+    imgInterval: 10,
     log: "",
   },
 
@@ -82,6 +89,7 @@ Page({
   _uiDirty: false,
   _slotsCache: null,
   _slotsDirty: false,
+  _cancelUploadSlot: -1,
 
   onLoad() {
     this._slotsCache = (this.data.slots || []).map((s) => ({ ...s }));
@@ -104,6 +112,7 @@ Page({
 
     this.syncState();
     this.scheduleUiRefresh(true);
+    this.onRefreshImgConfig().catch(() => {});
   },
 
   async onReady() {
@@ -125,6 +134,20 @@ Page({
   setSlotStatus(slot, status) {
     if (!this._slotsCache) this._slotsCache = (this.data.slots || []).map((s) => ({ ...s }));
     this._slotsCache = (this._slotsCache || []).map((s) => (s.slot === slot ? { ...s, status } : s));
+    this._slotsDirty = true;
+    this.scheduleUiRefresh();
+  },
+
+  setSlotBusy(slot, busy) {
+    if (!this._slotsCache) this._slotsCache = (this.data.slots || []).map((s) => ({ ...s }));
+    this._slotsCache = (this._slotsCache || []).map((s) => (s.slot === slot ? { ...s, busy: !!busy } : s));
+    this._slotsDirty = true;
+    this.scheduleUiRefresh();
+  },
+
+  setSlotHasImage(slot, hasImage) {
+    if (!this._slotsCache) this._slotsCache = (this.data.slots || []).map((s) => ({ ...s }));
+    this._slotsCache = (this._slotsCache || []).map((s) => (s.slot === slot ? { ...s, hasImage: !!hasImage } : s));
     this._slotsDirty = true;
     this.scheduleUiRefresh();
   },
@@ -197,9 +220,53 @@ Page({
     this.scheduleUiRefresh(true);
   },
 
+  // ---------------- Slideshow config ----------------
+  async onRefreshImgConfig() {
+    if (!ble.state.connected) return;
+    try {
+      const r = await ble.sendJsonStopAndWait({ cmd: "slideshow_config" }, { timeoutMs: 800, retries: 3 });
+      if (r && typeof r.enabled === "boolean") this.setData({ imgSlideshowEnabled: !!r.enabled });
+      if (r && (r.interval || r.interval === 0)) this.setData({ imgInterval: Number(r.interval) || 10 });
+    } catch (e) {
+      ble.log("slideshow_config FAIL: " + ((e && e.message) || String(e)));
+    }
+    this.scheduleUiRefresh();
+  },
+
+  async onImgSlideshowToggle(evt) {
+    if (!ble.state.connected) return;
+    const enabled = !!(evt && evt.detail && evt.detail.value);
+    try {
+      await ble.sendJsonStopAndWait({ cmd: "set_img_slideshow", enabled }, { timeoutMs: 800, retries: 3 });
+      this.setData({ imgSlideshowEnabled: enabled });
+    } catch (e) {
+      ble.log("set_img_slideshow FAIL: " + ((e && e.message) || String(e)));
+    }
+    this.scheduleUiRefresh();
+  },
+
+  onImgIntervalChanging(evt) {
+    const v = Number(evt && evt.detail && evt.detail.value);
+    if (!Number.isFinite(v)) return;
+    this.setData({ imgInterval: v });
+  },
+
+  async onImgIntervalChange(evt) {
+    this.onImgIntervalChanging(evt);
+    if (!ble.state.connected) return;
+    const value = Number(this.data.imgInterval) || 10;
+    try {
+      await ble.sendJsonStopAndWait({ cmd: "set_interval", value }, { timeoutMs: 800, retries: 3 });
+    } catch (e) {
+      ble.log("set_interval FAIL: " + ((e && e.message) || String(e)));
+    }
+    this.scheduleUiRefresh();
+  },
+
   async onPull(evt) {
     const slot = Number((evt && evt.currentTarget && evt.currentTarget.dataset && evt.currentTarget.dataset.slot) ?? 0);
     try {
+      this.setSlotBusy(slot, true);
       this.setSlotStatus(slot, "pulling...");
       this.setData({ previewSlot: slot });
       this._pull = { slot, buf: new Uint8Array(IMG_BYTES), got: 0, done: false };
@@ -210,6 +277,7 @@ Page({
       this._pull = null;
       this.setSlotStatus(slot, "pull fail");
       ble.log("PULL_BEGIN FAIL: " + ((e && e.message) || String(e)));
+      this.setSlotBusy(slot, false);
       this.scheduleUiRefresh(true);
     }
   },
@@ -273,6 +341,8 @@ Page({
     } catch (e) {
       ble.log("render FAIL: " + ((e && e.message) || String(e)));
     } finally {
+      this.setSlotHasImage(ctx.slot, true);
+      this.setSlotBusy(ctx.slot, false);
       this._pull = null;
       this.scheduleUiRefresh(true);
     }
@@ -281,6 +351,12 @@ Page({
   async onPush(evt) {
     const slot = Number((evt && evt.currentTarget && evt.currentTarget.dataset && evt.currentTarget.dataset.slot) ?? 0);
     try {
+      if (this.data.uploadLock && this.data.uploadingSlot !== slot) {
+        wx.showToast({ title: "上传中，请稍候", icon: "none" });
+        return;
+      }
+      this.setData({ uploadLock: true, uploadingSlot: slot });
+      this.setSlotBusy(slot, true);
       this.setSlotStatus(slot, "choosing...");
       const r = await new Promise((resolve, reject) => {
         wx.chooseMedia({
@@ -328,6 +404,7 @@ Page({
 
       let lastUi = 0;
       for (let off = 0; off < rgb565.length; off += CHUNK_BYTES) {
+        if (this._cancelUploadSlot === slot) throw new Error("upload cancelled");
         const chunk = rgb565.subarray(off, Math.min(rgb565.length, off + CHUNK_BYTES));
         const pl = new Uint8Array(1 + 4 + chunk.length);
         pl[0] = slot & 0xff;
@@ -347,12 +424,42 @@ Page({
         { timeoutMs: 1200, retries: 3 }
       );
       this.setSlotStatus(slot, "push OK");
+      this.setSlotHasImage(slot, true);
       ble.log(`PUSH_FINISH slot${slot} OK`);
       this.scheduleUiRefresh(true);
     } catch (e) {
-      this.setSlotStatus(slot, "push fail");
+      this.setSlotStatus(slot, (String((e && e.message) || "").includes("cancelled")) ? "cancelled" : "push fail");
       ble.log("PUSH FAIL: " + ((e && e.message) || String(e)));
       this.scheduleUiRefresh(true);
+    } finally {
+      this._cancelUploadSlot = -1;
+      this.setSlotBusy(slot, false);
+      this.setData({ uploadLock: false, uploadingSlot: -1 });
     }
+  },
+
+  async onCancelUpload(evt) {
+    const slot = Number((evt && evt.currentTarget && evt.currentTarget.dataset && evt.currentTarget.dataset.slot) ?? 0);
+    this._cancelUploadSlot = slot;
+    try {
+      await ble.sendJsonStopAndWait({ cmd: "img_cancel" }, { timeoutMs: 1200, retries: 2 });
+    } catch (_) {}
+    this.setSlotStatus(slot, "cancelled");
+    this.setSlotBusy(slot, false);
+    this.setData({ uploadLock: false, uploadingSlot: -1 });
+    this.scheduleUiRefresh(true);
+  },
+
+  async onDeleteImage(evt) {
+    const slot = Number((evt && evt.currentTarget && evt.currentTarget.dataset && evt.currentTarget.dataset.slot) ?? 0);
+    if (!ble.state.connected) return;
+    try {
+      await ble.sendJsonStopAndWait({ cmd: "delete_image", slot }, { timeoutMs: 1500, retries: 2 });
+      this.setSlotStatus(slot, "deleted");
+      this.setSlotHasImage(slot, false);
+    } catch (e) {
+      ble.log("delete_image FAIL: " + ((e && e.message) || String(e)));
+    }
+    this.scheduleUiRefresh(true);
   },
 });

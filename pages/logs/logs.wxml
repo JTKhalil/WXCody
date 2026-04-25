@@ -1,0 +1,16 @@
+<view class="container">
+  <view class="nav">
+    <view class="title">日志与调试</view>
+    <view class="mono small">{{connected ? "已连接" : "未连接"}} · {{codyName || "-"}}</view>
+  </view>
+
+  <view class="card">
+    <view class="row" style="margin-bottom:10px; flex-wrap:wrap;">
+      <button class="btn secondary" bindtap="onCopyLogs">复制日志</button>
+      <button class="btn secondary" bindtap="onClearLogs">清空日志</button>
+      <button class="btn secondary" bindtap="onToggleDebug">{{showDebug ? "隐藏调试" : "显示调试"}}</button>
+    </view>
+    <view class="mono">{{log}}</view>
+  </view>
+</view>
+

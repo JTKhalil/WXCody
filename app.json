@@ -3,6 +3,9 @@
     "pages/splash/splash",
     "pages/connect/connect",
     "pages/console/console",
+    "pages/handdraw/handdraw",
+    "pages/device/device",
+    "pages/logs/logs",
     "pages/ota/ota",
     "pages/gallery/gallery"
   ],

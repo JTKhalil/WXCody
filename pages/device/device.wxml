@@ -1,0 +1,73 @@
+<view class="container">
+  <view class="nav">
+    <view class="title">设备与显示</view>
+    <view class="mono small">{{connected ? "已连接" : "未连接"}} · {{codyName || "-"}}</view>
+  </view>
+
+  <view class="sectionTitle">连接</view>
+  <view class="card">
+    <view class="row" style="justify-content:space-between; align-items:center;">
+      <view class="mono">状态</view>
+      <view class="mono">{{connected ? "OK" : "未连接"}}</view>
+    </view>
+    <view class="row" style="margin-top:12px;">
+      <button class="btn secondary" bindtap="onReconnect" disabled="{{connected}}">重连</button>
+      <button class="btn secondary" bindtap="onDisconnectBle" disabled="{{!connected}}">断开</button>
+    </view>
+  </view>
+
+  <view class="sectionTitle">背光亮度</view>
+  <view class="card">
+    <view class="mono">亮度：{{brightness}}</view>
+    <slider min="0" max="255" value="{{brightness}}" step="1" bindchanging="onBrightnessChanging" bindchange="onBrightnessChange" />
+  </view>
+
+  <view class="sectionTitle">存储空间</view>
+  <view class="card">
+    <view class="mono">total: {{fsTotal}} KB</view>
+    <view class="mono">used: {{fsUsed}} KB</view>
+    <view class="mono">free: {{fsFree}} KB</view>
+    <progress percent="{{fsPercent}}" stroke-width="6" />
+    <view class="row" style="margin-top:10px;">
+      <button class="btn secondary" bindtap="onRefreshFs" disabled="{{!connected}}">刷新</button>
+    </view>
+  </view>
+
+  <view class="sectionTitle">固件更新</view>
+  <view class="card">
+    <view class="mono">current: {{fwCurrent || "-"}}</view>
+    <view class="mono">latest: {{fwLatest || "-"}}</view>
+    <view class="mono" wx:if="{{fwUpdateAvailable}}" style="margin-top:8px; white-space:pre-wrap;">{{fwNotes}}</view>
+    <view class="mono" wx:elif="{{fwNotes}}" style="margin-top:8px; white-space:pre-wrap; color:#aaa;">{{fwNotes}}</view>
+    <view wx:if="{{fwBusy && fwBusyMode==='upgrade'}}" style="margin-top:14px;">
+      <progress percent="{{fwPercent}}" stroke-width="6" />
+      <view class="mono" style="margin-top:8px; text-align:right; color:#aaa;">{{fwPercent}}%</view>
+    </view>
+    <view class="mono" wx:if="{{fwStatus}}" style="margin-top:8px; color:#aaa;">{{fwStatus}}</view>
+    <view class="row" style="margin-top:10px;">
+      <button class="btn secondary" bindtap="onCheckUpdate" disabled="{{!connected || fwBusy}}">检查</button>
+      <button class="btn" bindtap="onUpgrade" disabled="{{!connected || fwBusy || !fwUpdateAvailable}}">{{fwUpdateAvailable ? "升级" : "已最新"}}</button>
+    </view>
+  </view>
+
+  <view class="sectionTitle danger">危险操作</view>
+  <view class="card">
+    <view class="row" style="flex-wrap:wrap;">
+      <button class="btn danger" bindtap="onAskConfirm" data-action="format_fs" disabled="{{!connected}}">删除Cody上的所有数据</button>
+      <button class="btn secondary" bindtap="onAskConfirm" data-action="reset_system" disabled="{{!connected}}">恢复出厂设置</button>
+    </view>
+  </view>
+
+  <!-- Confirm modal -->
+  <view wx:if="{{confirmOpen}}" class="overlay show" catchtap="onCancelConfirm">
+    <view class="modal" catchtap="noop">
+      <view class="modalTitle">系统提示</view>
+      <view class="mono">{{confirmMsg}}</view>
+      <view class="row" style="margin-top:12px;">
+        <button class="btn secondary" bindtap="onCancelConfirm">取消</button>
+        <button class="btn danger" bindtap="onOkConfirm">确定</button>
+      </view>
+    </view>
+  </view>
+</view>
+

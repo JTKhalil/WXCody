@@ -1,21 +1,8 @@
 .container {
   background: #121214;
   min-height: 100vh;
-  padding-bottom: 98px; /* bottom tabs + safe distance */
+  padding-bottom: 32px;
   overflow-x: hidden; /* 禁止左右滑动/横向滚动 */
-}
-
-.tabsBottom {
-  position: fixed;
-  left: 12px;
-  right: 12px;
-  bottom: 12px;
-  z-index: 100;
-  display: flex;
-  background: #222;
-  border: 1px solid #333;
-  border-radius: 16px;
-  overflow: hidden;
 }
 
 .card {
@@ -85,29 +72,6 @@
   background: #e74c3c;
 }
 
-.tabBtn {
-  flex: 1;
-  text-align: center;
-  padding: 14px 2px;
-  color: #888;
-  background: #222;
-  border: none;
-  border-radius: 0;
-  font-size: 11px;
-  line-height: 1.15;
-}
-
-.tabBtn::after {
-  border: none;
-}
-
-.tabBtn.active {
-  color: #e67e22;
-  background: #2a2a2f;
-  border-top: 0;
-  box-shadow: inset 0 2px 0 #e67e22;
-}
-
 .title {
   font-size: 14px;
   font-weight: 700;
@@ -117,6 +81,160 @@
 
 .title.danger {
   color: #e74c3c;
+}
+
+.navTop {
+  padding: 18px 12px 8px;
+}
+
+.largeTitle {
+  font-size: 28px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: 0.01em;
+}
+
+.statusRow {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.statusName {
+  margin-left: 10px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statusLine {
+  margin-top: 8px;
+  color: #9aa0a6;
+}
+
+.pill {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid #333;
+  background: #1c1c1f;
+  color: #bbb;
+}
+
+.pill.on {
+  border-color: rgba(52, 199, 89, 0.35);
+  color: #9be4b1;
+}
+
+.pill.off {
+  border-color: rgba(255, 69, 58, 0.35);
+  color: #f5a3a0;
+}
+
+.ghostBtn {
+  background: transparent;
+  border: 1px solid #333;
+  color: #ddd;
+  padding: 7px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ghostBtn[disabled] {
+  opacity: 0.45;
+}
+
+.section {
+  margin-top: 8px;
+}
+
+.sectionTitle {
+  margin: 10px 16px 8px;
+  color: #9aa0a6;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.cellTitle {
+  color: #fff;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.cellSub {
+  margin-top: 4px;
+  color: #aaa;
+}
+
+.seg {
+  display: flex;
+  flex-direction: row;
+  border: 1px solid #333;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #151518;
+}
+
+.segBtn {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #bbb;
+  font-weight: 800;
+  min-width: 28px;
+  text-align: center;
+}
+
+.segBtn.on {
+  background: #2a2a2f;
+  color: #fff;
+}
+
+.quickGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.quickBtn {
+  background: #2a2a2f;
+  border: 1px solid #333;
+  color: #eee;
+  border-radius: 14px;
+  padding: 12px 10px;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.list {
+  margin-left: 12px;
+  margin-right: 12px;
+  border: 1px solid #333;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #1c1c1f;
+}
+
+.cell {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 14px 14px;
+  border-bottom: 1px solid #2a2a2f;
+}
+
+.cell:last-child {
+  border-bottom: 0;
+}
+
+.cellRight {
+  margin-left: auto;
+  color: #666;
+  font-weight: 900;
 }
 
 .modeGrid {
