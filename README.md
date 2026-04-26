@@ -1,6 +1,6 @@
 ## WXCody（微信小程序：Cody BLE 管理端）
 
-本目录是 **微信小程序**，用于通过 **BLE（GATT）** 直连 `Cody` 设备，完成模式切换、图库传输、笔记管理、设置与 OTA 升级等操作。
+本目录是 **微信小程序**，用于通过 **BLE（GATT）** 直连 `Cody` 设备，完成连接/配对、模式切换、图片/笔记/手绘设置、系统设置，以及 **固件升级（在线与本地 `firmware.bin`）**。
 
 ### 运行环境
 
@@ -20,20 +20,27 @@
 页面列表定义在 `app.json`：
 
 - `pages/splash/splash`：启动页（尝试自动重连上次设备，失败则进入连接页）
-- `pages/connect/connect`：连接页（打开蓝牙、扫描 `Cody-*`、连接、PING、查看日志）
-- `pages/console/console`：主控制台（模式切换、系统设置入口等）
-- `pages/mode/image|note|handdraw/*`：图片 / 笔记 / 手绘模式设置页
-- `pages/settings/*`：连接、存储、**更新（含在线升级与本地 `firmware.bin`）**、背光等
+- `pages/connect/connect`：连接页（打开蓝牙、扫描 `Cody-*`、连接与设备端确认配对）
+- `pages/console/console`：主控制台（模式切换、系统设置入口）
+- `pages/mode/image/image`：图片模式设置
+- `pages/mode/note/note`：笔记模式设置
+- `pages/mode/handdraw/handdraw`：手绘模式设置
+- `pages/settings/conn`：连接设置（断开/清配对）
+- `pages/settings/fs`：存储空间与危险操作（格式化/恢复出厂）
+- `pages/settings/fw`：更新设置（检查版本、在线升级、本地 `firmware.bin` 升级）
+- `pages/settings/bright`：背光亮度
+
+> 说明：历史上的独立 `pages/ota/ota` 与 `pages/gallery/gallery` 调试页已移除，升级统一收敛到「更新设置」二级页。
 
 ### BLE 约定（必须与固件一致）
 
-UUID 常量在 `services/ble.ts`（以及运行时实际使用的 `services/ble.js`）中定义：
+UUID 常量在运行时实现 `services/ble.js` 中定义：
 
 - **Service UUID**：`0000C0DE-0000-1000-8000-00805F9B34FB`
 - **RX Char UUID（Write/WriteNoResponse）**：`0000C0D1-0000-1000-8000-00805F9B34FB`
 - **TX Char UUID（Notify）**：`0000C0D2-0000-1000-8000-00805F9B34FB`
 
-扫描过滤策略：默认按设备名 `Cody-` 前缀匹配（见 `pages/connect/connect.ts` / `services/ble.js`）。
+扫描过滤策略：默认按设备名 `Cody-` 前缀匹配（见 `pages/connect/connect.js` / `services/ble.js`）。
 
 ### 首次连接/绑定（重要）
 
