@@ -14,12 +14,6 @@ import {
 /** 控制台底部 Tab：手绘、设置（与设备 displayMode 无关） */
 const TAB_HANDDRAW = 3;
 const TAB_SETTINGS = 4;
-/** 模式的“设置页”映射到原控制台 tab 内容 */
-const MODE_SETTINGS_TAB_MAP = {
-  0: 1, // 图片模式 -> 图库设置
-  2: 2, // 笔记模式 -> 笔记设置
-  4: 3, // 手绘模式 -> 手绘设置
-};
 // 提速：固件端二进制帧总长度上限为 180B（含头+CRC），当前 ImgPushChunk 负载含 1(slot)+4(off)+data，
 // 因此 data 的安全上限约为 180-9(帧开销)-5(字段)=166B。
 const CHUNK_BYTES = 166;
@@ -307,7 +301,7 @@ function makeSolidHanddrawRgb565(bgKey) {
 function handdrawRgb565ApplySegment(bytes, x0, y0, x1, y1, rgb565, widthPx) {
   const kW = 240;
   const kH = 240;
-  let wp = Math.max(1, Math.min(24, Number(widthPx) || 4));
+  let wp = Math.max(1, Math.min(24, Number(widthPx) || 2));
   let r = Math.floor(wp / 2);
   if (r < 1) r = 1;
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -409,7 +403,7 @@ Page({
     brightness: 255,
 
     hdPenHex: "#ffffff",
-    hdStrokeW: 4,
+    hdStrokeW: 2,
     /** 镜像模式：横向对称绘制 */
     hdMirror: false,
     hdBg: "black",
@@ -433,8 +427,6 @@ Page({
     confirmOpen: false,
     confirmMsg: "",
 
-    /** 以“模式设置页”方式打开（新页面实例，隐藏底部Tab） */
-    isModeSettingsPage: false,
     /** 内容未超屏时禁用滚动 */
     canScroll: false,
   },
@@ -452,7 +444,6 @@ Page({
   _galleryFrameUnsub: null,
   _lastTimeSyncMs: 0,
   _forceThumbRedrawOnce: false,
-  _disconnectRedirecting: false,
   _tabLoaded: null,
   _cancelUploadSlots: null,
   _hdCtx: null,
@@ -475,13 +466,7 @@ Page({
   _modePollId: 0,
   _unsubFwUpgrade: null,
 
-  onLoad(options) {
-    // 从模式页“设置”按钮打开：作为一个新的页面实例显示指定 tab，并隐藏底部 tabs
-    const isModeSettingsPage = String(options && options.fromModeSettings || "") === "1";
-    const initTab = Number(options && options.tab);
-    let initTitle = String(options && options.title || "");
-    try { initTitle = decodeURIComponent(initTitle); } catch (_) {}
-
+  onLoad() {
     this._slotsCache = (this.data.slots || []).map((s) => ({ ...s }));
     this._thumbCtx = {};
     this._cancelUploadSlots = new Set();
@@ -511,16 +496,9 @@ Page({
         }
       }
       if (connected) {
-        this._disconnectRedirecting = false;
         this._syncTimeFromPhone().catch(() => {});
-      } else {
-        // 断开后直接回到连接页
-        if (this._disconnectRedirecting) return;
-        this._disconnectRedirecting = true;
-        try {
-          wx.redirectTo({ url: "/pages/connect/connect" });
-        } catch (_) {}
       }
+      // 断连后统一由 services/ble emitConn → reLaunch 连接页，此处不再 redirectTo，避免与 reLaunch 双跳
     }));
 
     // 不在 onLoad 里注册 onJson/onFrame（防止回调风暴卡 UI）。
@@ -534,7 +512,6 @@ Page({
     // 关键：从 connect 页跳转进来时，BLE 可能已经处于 connected 状态，但不会再触发一次 onConnectionStateChange(true)。
     // 这种情况下需要在进入控制台页时主动同步一次时间，否则要等用户切 tab 才会触发同步。
     if (ble.state.connected) {
-      this._disconnectRedirecting = false;
       this._syncTimeFromPhone().catch(() => {});
     }
 
@@ -548,19 +525,8 @@ Page({
     // 不主动刷新 log，避免大量 setData
     // 初次进入：延迟一次轻量刷新，避免刚跳转就并发 discover/write
     setTimeout(() => {
-      if (isModeSettingsPage && Number.isFinite(initTab)) {
-        try {
-          if (initTitle) wx.setNavigationBarTitle({ title: initTitle });
-        } catch (_) {}
-        this.setData({ isModeSettingsPage: true, activeTab: initTab }, () => {
-          this._updateHanddrawBlockState();
-        });
-        // 触发首次加载逻辑（复用 onTab）
-        this.onTab({ currentTarget: { dataset: { tab: initTab } } }).catch(() => {});
-      } else {
-        this.onRefreshMode().catch(() => {});
-        if (this._tabLoaded) this._tabLoaded[0] = true;
-      }
+      this.onRefreshMode().catch(() => {});
+      if (this._tabLoaded) this._tabLoaded[0] = true;
     }, 250);
   },
 
@@ -1341,7 +1307,7 @@ Page({
 
   onHdStrokeChange(evt) {
     const v = Number(evt && evt.detail && evt.detail.value);
-    const value = Math.max(2, Math.min(16, Number.isFinite(v) ? v : 4));
+    const value = Math.max(2, Math.min(16, Number.isFinite(v) ? v : 2));
     this.setData({ hdStrokeW: value });
   },
 
@@ -1469,7 +1435,7 @@ Page({
     const m1 = clampHanddrawXY(x, y);
     if (m0.x === m1.x && m0.y === m1.y) return;
     const c = hexToRgb565(this.data.hdPenHex);
-    const w = Number(this.data.hdStrokeW) || 4;
+    const w = Number(this.data.hdStrokeW) || 2;
     if (!(this._hdRgb565Cache instanceof Uint8Array) || this._hdRgb565Cache.length !== IMG_BYTES) {
       this._hdRgb565Cache = makeSolidHanddrawRgb565(this.data.hdBg || "black");
     }
@@ -1725,13 +1691,8 @@ Page({
     }, 50);
   },
 
-  async onOpenModeSettings(evt) {
+  onOpenModeSettings(evt) {
     const mode = Number((evt && evt.currentTarget && evt.currentTarget.dataset && evt.currentTarget.dataset.mode) ?? -1);
-    const tab = MODE_SETTINGS_TAB_MAP[mode];
-    if (!Number.isFinite(tab)) {
-      wx.showToast({ title: "功能还未开放", icon: "none" });
-      return;
-    }
     if (mode === 0) {
       wx.navigateTo({ url: "/pages/mode/image/image" });
       return;

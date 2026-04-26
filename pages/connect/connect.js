@@ -339,9 +339,9 @@ Page({
       // 自动回连场景：不再自动弹“等待确认”弹窗（避免重启后回到连接页时无意义弹窗）
       // 未信任设备需要确认时，交给用户手动点击设备名称触发连接流程与弹窗。
     } catch (_) {
-      // 自动连接失败：断开并静默留在连接页
+      // 自动连接失败：断开并静默留在连接页（走 ble.closeAdapter 保持与 openAdapter 状态一致，避免重复注册监听）
       try { await ble.disconnect(); } catch (_) {}
-      try { await wx.closeBluetoothAdapter(); } catch (_) {}
+      try { await ble.closeAdapter(); } catch (_) {}
     }
   },
 

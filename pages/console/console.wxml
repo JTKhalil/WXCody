@@ -33,7 +33,7 @@
   </view>
 
   <!-- Tab: Gallery -->
-  <view class="card {{isModeSettingsPage ? '' : 'galleryFull'}}" hidden="{{activeTab!==1}}">
+  <view class="card galleryFull" hidden="{{activeTab!==1}}">
     <view class="title">图片轮播</view>
     <view class="row" style="justify-content:space-between; align-items:center;">
       <view class="mono">启用轮播</view>
@@ -43,7 +43,7 @@
     <slider min="3" max="60" value="{{imgInterval}}" step="1" bindchanging="onImgIntervalChanging" bindchange="onImgIntervalChange" />
   </view>
 
-  <view class="card {{isModeSettingsPage ? '' : 'galleryFull'}}" hidden="{{activeTab!==1}}">
+  <view class="card galleryFull" hidden="{{activeTab!==1}}">
     <view class="slots">
       <view class="slot {{item.hasImage ? 'hasImage' : ''}}" wx:for="{{slots}}" wx:key="slot">
         <view class="thumb">
@@ -180,7 +180,7 @@
   </view>
 
   <!-- Bottom Tabs：手绘在笔记后、设置前 -->
-  <view wx:if="{{!isModeSettingsPage}}" class="tabsBottom">
+  <view class="tabsBottom">
     <button class="tabBtn {{activeTab===0?'active':''}}" bindtap="onTab" data-tab="0">模式切换</button>
     <button class="tabBtn {{activeTab===4?'active':''}}" bindtap="onTab" data-tab="4">系统设置</button>
   </view>

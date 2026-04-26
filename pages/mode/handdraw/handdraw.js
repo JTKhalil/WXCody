@@ -114,7 +114,7 @@ function makeSolidHanddrawRgb565(bgKey) {
 function handdrawRgb565ApplySegment(bytes, x0, y0, x1, y1, rgb565, widthPx) {
   const kW = 240;
   const kH = 240;
-  let wp = Math.max(1, Math.min(24, Number(widthPx) || 4));
+  let wp = Math.max(1, Math.min(24, Number(widthPx) || 2));
   let r = Math.floor(wp / 2);
   if (r < 1) r = 1;
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -167,7 +167,7 @@ Page({
     deviceId: "",
 
     hdPenHex: "#ffffff",
-    hdStrokeW: 4,
+    hdStrokeW: 2,
     hdMirror: false,
     hdBg: "black",
     hdPalette: ["#000000", "#ffffff", "#e74c3c", "#3498db", "#2ecc71", "#f1c40f", "#9b59b6"],
@@ -389,7 +389,7 @@ Page({
 
   onHdStrokeChange(evt) {
     const v = Number(evt && evt.detail && evt.detail.value);
-    const value = Math.max(2, Math.min(16, Number.isFinite(v) ? v : 4));
+    const value = Math.max(2, Math.min(16, Number.isFinite(v) ? v : 2));
     this.setData({ hdStrokeW: value });
   },
 
@@ -676,7 +676,7 @@ Page({
     const m1 = clampHanddrawXY(x, y);
     if (m0.x === m1.x && m0.y === m1.y) return;
     const c = hexToRgb565(this.data.hdPenHex);
-    const w = Number(this.data.hdStrokeW) || 4;
+    const w = Number(this.data.hdStrokeW) || 2;
     if (!(this._hdRgb565Cache instanceof Uint8Array) || this._hdRgb565Cache.length !== IMG_BYTES) {
       this._hdRgb565Cache = makeSolidHanddrawRgb565(this.data.hdBg || "black");
     }

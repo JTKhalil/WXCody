@@ -37,6 +37,8 @@ export class BleCodyClient {
   seq = 1;
 
   _adapterInited = false;
+  /** 微信全局 BLE 监听只能注册一次；重复 on* 会导致同一断连事件触发多遍 emitConn / reLaunch */
+  _wxBleCoreListenersBound = false;
   _writeQ = Promise.resolve();
   _readyQ = Promise.resolve();
   /** 手绘笔迹世代：清屏 bump 后，队列中旧世代的写入会被丢弃，避免清屏后仍画出未同步笔迹 */
@@ -191,62 +193,65 @@ export class BleCodyClient {
     this.state.adapterReady = true;
     this._adapterInited = true;
 
-    // 跟踪系统蓝牙开关，便于上层判断“是否可用”
-    try {
-      wx.onBluetoothAdapterStateChange((st) => {
-        this.state.adapterReady = !!(st && st.available);
-      });
-    } catch (_) {}
+    if (!this._wxBleCoreListenersBound) {
+      this._wxBleCoreListenersBound = true;
+      // 跟踪系统蓝牙开关，便于上层判断“是否可用”
+      try {
+        wx.onBluetoothAdapterStateChange((st) => {
+          this.state.adapterReady = !!(st && st.available);
+        });
+      } catch (_) {}
 
-    wx.onBLECharacteristicValueChange((evt) => {
-      if (!evt || !evt.value) return;
-      const u8 = new Uint8Array(evt.value);
-      // JSONL 可能被 BLE notify 分片：首包以 '{' 开头，后续包可能不是 '{'。
-      // 为避免把二进制流误判为文本导致解码/JSON 缓冲暴涨，这里只在“确定是 JSONL/OK”时才喂给文本解析器。
-      const hasJsonListeners = this.onJsonHandlers.length > 0;
-      const hasFrameListeners = this.onFrameHandlers.length > 0;
+      wx.onBLECharacteristicValueChange((evt) => {
+        if (!evt || !evt.value) return;
+        const u8 = new Uint8Array(evt.value);
+        // JSONL 可能被 BLE notify 分片：首包以 '{' 开头，后续包可能不是 '{'。
+        // 为避免把二进制流误判为文本导致解码/JSON 缓冲暴涨，这里只在“确定是 JSONL/OK”时才喂给文本解析器。
+        const hasJsonListeners = this.onJsonHandlers.length > 0;
+        const hasFrameListeners = this.onFrameHandlers.length > 0;
 
-      // JSONL（仅在确实有人消费时才做解码/拼包，避免 JS 线程被拖死）
-      // 注意：JSONL 可能被分片 notify；判断是否继续消费要看“字节缓冲”是否非空，而不是旧的字符串缓冲。
-      if (hasJsonListeners || (this._jsonBytes && this._jsonBytes.length > 0)) {
-        const b0 = u8.length ? (u8[0] & 0xff) : 0;
-        const looksJsonStart = (b0 === 0x7b /* '{' */);
-        const looksOkStart = (b0 === 0x4f /* 'O' */);
-        if ((this._jsonBytes && this._jsonBytes.length > 0) || looksJsonStart || looksOkStart) {
-          this._consumeJsonl(u8);
+        // JSONL（仅在确实有人消费时才做解码/拼包，避免 JS 线程被拖死）
+        // 注意：JSONL 可能被分片 notify；判断是否继续消费要看“字节缓冲”是否非空，而不是旧的字符串缓冲。
+        if (hasJsonListeners || (this._jsonBytes && this._jsonBytes.length > 0)) {
+          const b0 = u8.length ? (u8[0] & 0xff) : 0;
+          const looksJsonStart = (b0 === 0x7b /* '{' */);
+          const looksOkStart = (b0 === 0x4f /* 'O' */);
+          if ((this._jsonBytes && this._jsonBytes.length > 0) || looksJsonStart || looksOkStart) {
+            this._consumeJsonl(u8);
+          }
         }
-      }
 
-      // 二进制帧（仅在确实有人消费时才做解析）
-      if (!hasFrameListeners) return;
-      const frames = this.parser.push(evt.value);
-      for (const f of frames) this.emitFrame(f);
-    });
+        // 二进制帧（仅在确实有人消费时才做解析）
+        if (!hasFrameListeners) return;
+        const frames = this.parser.push(evt.value);
+        for (const f of frames) this.emitFrame(f);
+      });
 
-    wx.onBLEConnectionStateChange((evt) => {
-      const dev = (evt && evt.deviceId) || "";
-      if (!dev) return;
-      if (this.state.deviceId && dev !== this.state.deviceId) return;
+      wx.onBLEConnectionStateChange((evt) => {
+        const dev = (evt && evt.deviceId) || "";
+        if (!dev) return;
+        if (this.state.deviceId && dev !== this.state.deviceId) return;
 
-      if (evt.connected) {
-        this.state.connected = true;
-        if (!this.state.deviceId) this.state.deviceId = dev;
-        this.log(`连接状态变化：已连接 deviceId=${dev}`);
-        this.emitConn(true);
-        return;
-      }
+        if (evt.connected) {
+          this.state.connected = true;
+          if (!this.state.deviceId) this.state.deviceId = dev;
+          this.log(`连接状态变化：已连接 deviceId=${dev}`);
+          this.emitConn(true);
+          return;
+        }
 
-      this.state.connected = false;
-      this.state.scanning = false;
-      this.state.serviceId = undefined;
-      this.state.rxCharId = undefined;
-      this.state.txCharId = undefined;
-      this.state.authed = false;
-      this._jsonBuf = "";
-      this._jsonBytes = new Uint8Array(0);
-      this.log(`连接状态变化：已断开 deviceId=${dev}`);
-      this.emitConn(false);
-    });
+        this.state.connected = false;
+        this.state.scanning = false;
+        this.state.serviceId = undefined;
+        this.state.rxCharId = undefined;
+        this.state.txCharId = undefined;
+        this.state.authed = false;
+        this._jsonBuf = "";
+        this._jsonBytes = new Uint8Array(0);
+        this.log(`连接状态变化：已断开 deviceId=${dev}`);
+        this.emitConn(false);
+      });
+    }
   }
 
   async closeAdapter() {
