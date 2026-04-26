@@ -1,0 +1,20 @@
+<scroll-view class="pageScroll" scroll-y="{{canScroll}}" enhanced="{{true}}" bounces="{{false}}" show-scrollbar="{{false}}" scroll-with-animation="{{false}}">
+<view class="container">
+  <view class="card">
+    <view class="mono">总空间：{{fsTotal}} KB</view>
+    <view class="mono">已使用：{{fsUsed}} KB</view>
+    <view class="mono">可用：{{fsFree}} KB</view>
+    <progress percent="{{fsPercent}}" stroke-width="6" />
+    <view class="row" style="margin-top:10px;">
+      <button class="btn secondary" bindtap="onRefreshFs" disabled="{{!connected}}">刷新</button>
+    </view>
+
+    <view class="mono" style="margin-top:14px; font-weight:800; color:#fff;">危险操作</view>
+    <view class="row" style="margin-top:10px;">
+      <button class="btn danger" bindtap="onConfirmDanger" data-action="format_fs" disabled="{{!connected}}">删除Cody上的所有数据</button>
+      <button class="btn secondary" bindtap="onConfirmDanger" data-action="reset_system" disabled="{{!connected}}">恢复出厂设置</button>
+    </view>
+  </view>
+</view>
+</scroll-view>
+

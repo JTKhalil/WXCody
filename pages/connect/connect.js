@@ -20,6 +20,53 @@ Page({
     canScroll: false,
   },
 
+  _tapToken: 0,
+  _connecting: false,
+
+  _isLocallyTrusted(deviceId) {
+    const id = String(deviceId || "").trim();
+    if (!id) return false;
+    try {
+      const lastId = String(wx.getStorageSync("wxcody_last_device") || "").trim();
+      if (lastId && lastId === id) return true;
+    } catch (_) {}
+    try {
+      const list = wx.getStorageSync("wxcody_known_devices");
+      const arr = Array.isArray(list) ? list : [];
+      return arr.some((x) => x && String(x.deviceId || "").trim() === id);
+    } catch (_) {}
+    return false;
+  },
+
+  _showSysLoading(title) {
+    try {
+      wx.showLoading({ title: String(title || "连接中..."), mask: true });
+      return true;
+    } catch (_) {}
+    return false;
+  },
+
+  _hideSysLoading() {
+    try { wx.hideLoading(); } catch (_) {}
+  },
+
+  _lastTrustedRejectAt: 0,
+
+  async _checkTrustedQuickly() {
+    // 设备刚重启时，pair_status 可能短时间内仍显示 pending=true；
+    // 这里做一个短轮询窗口，尽量自动进入控制台（已信任设备应无需用户确认）。
+    const startTs = Date.now();
+    while (Date.now() - startTs < 3200) {
+      if (!ble.state.connected) throw new Error("设备已断开");
+      try {
+        const r = await ble.sendJsonStopAndWait({ cmd: "pair_status" }, { timeoutMs: 900, retries: 1 });
+        if (r && r.status === "ok" && r.pending === false) return true;
+      } catch (_) {}
+      await new Promise((r) => setTimeout(r, 450));
+    }
+    return false;
+  },
+
   _clearAllCachesKeepIdentity() {
     // 清空所有小程序缓存（图片/笔记/设备记录等），但保留本机身份（clientId / deviceName）
     try {
@@ -42,6 +89,19 @@ Page({
   _btPrevAvail: null,
   _btHandling: false,
   _btStateCb: null,
+
+  _scheduleInitialAutoScanIfNeeded() {
+    try {
+      const app = getApp();
+      const gd = app && app.globalData;
+      if (!gd || gd.connectInitialAutoScanDone) return;
+      gd.connectInitialAutoScanDone = true;
+      setTimeout(() => {
+        if (this._navigated || ble.state.connected) return;
+        this.onScanList().catch(() => {});
+      }, 320);
+    } catch (_) {}
+  },
 
   onLoad() {
     const unsubs = [];
@@ -102,6 +162,7 @@ Page({
       try { wx.setStorageSync("wxcody_device_name", dn); } catch (_) {}
     }
     this.setData({ deviceName: dn });
+    this._scheduleInitialAutoScanIfNeeded();
     setTimeout(() => this._updateCanScroll(), 80);
   },
 
@@ -171,19 +232,7 @@ Page({
   },
 
   onShow() {
-    // 从控制台断开返回时，主动扫描附近 Cody
-    // - query 参数优先（用于 redirectTo 的显式触发）
-    // - 以及首次进入时的默认自动扫描（之前已在 onLoad 调用 onScanList）
-    try {
-      const pages = getCurrentPages();
-      const cur = pages && pages.length ? pages[pages.length - 1] : null;
-      const opts = (cur && cur.options) || {};
-      if (opts && String(opts.scan || "") === "1") {
-        // 清掉标记，避免 onShow 重复触发（对 options 不可写就忽略）
-        try { cur.options.scan = ""; } catch (_) {}
-        this.onScanList().catch(() => {});
-      }
-    } catch (_) {}
+    // 自动扫描仅在「本会话首次进入连接页」由 onLoad 调度一次；断连/拒绝后回此页不再自动扫，需用户点「扫描附近的 Cody」
     setTimeout(() => this._updateCanScroll(), 80);
   },
 
@@ -192,10 +241,7 @@ Page({
     if (!name) return;
     try {
       const id = String(this.data.clientId || "").trim();
-      // 加快名称同步：pair_hello 不依赖 notify 回包（有些机型刚订阅时回包会延迟）
-      // 这里改成“发两次”提高到达率，避免 Cody 端一直拿不到设备名称而不显示连接页。
-      await ble.sendJson({ cmd: "pair_hello", name, id });
-      await new Promise((r) => setTimeout(r, 60));
+      // 避免过密发送命令导致设备端配对页卡死：只发一次，后续依赖 pair_status 轮询
       await ble.sendJson({ cmd: "pair_hello", name, id });
     } catch (_) {}
   },
@@ -225,9 +271,11 @@ Page({
 
   async _waitDeviceConfirm() {
     this.setData({ waitingConfirm: true });
+    const startTs = Date.now();
     try {
       while (this.data.waitingConfirm) {
         if (!ble.state.connected) throw new Error("设备已断开");
+        if (Date.now() - startTs > 20000) throw new Error("等待设备确认超时");
         try {
           const r = await ble.sendJsonStopAndWait({ cmd: "pair_status" }, { timeoutMs: 900, retries: 1 });
           if (r && r.status === "ok" && r.pending === false) {
@@ -282,29 +330,37 @@ Page({
       await ble.discoverAndSubscribe();
       await this._sendPairHello();
       // 启动自动回连：已信任设备应当直接进入控制台，不弹“等待确认”窗口
-      let pending = true;
-      try {
-        const r = await ble.sendJsonStopAndWait({ cmd: "pair_status" }, { timeoutMs: 900, retries: 1 });
-        if (r && r.status === "ok" && r.pending === false) pending = false;
-      } catch (_) {}
-
-      if (!pending) {
+      const trusted = await this._checkTrustedQuickly();
+      if (trusted) {
         this._goConsoleOnce();
         return;
       }
 
-      // 未信任/需确认：再弹窗等待设备端确认
-      this.setData({ waitingConfirm: true, waitingText: "请等待设备确认" });
-      await this._waitDeviceConfirm();
-      this._goConsoleOnce();
+      // 自动回连场景：不再自动弹“等待确认”弹窗（避免重启后回到连接页时无意义弹窗）
+      // 未信任设备需要确认时，交给用户手动点击设备名称触发连接流程与弹窗。
     } catch (_) {
-      // 自动连接失败：静默留在连接页
+      // 自动连接失败：断开并静默留在连接页
+      try { await ble.disconnect(); } catch (_) {}
       try { await wx.closeBluetoothAdapter(); } catch (_) {}
     }
   },
 
   async onScanList() {
     try {
+      // 若其实还处于连接状态（部分机型会导致扫描不再上报），直接尝试进入控制台
+      if (ble.state.connected) {
+        // 已信任设备：直接进入控制台
+        try {
+          const r = await ble.sendJsonStopAndWait({ cmd: "pair_status" }, { timeoutMs: 900, retries: 1 });
+          if (r && r.status === "ok" && r.pending === false) {
+            this._goConsoleOnce();
+            return;
+          }
+        } catch (_) {}
+        // 非信任/异常：先断开再扫描
+        try { await ble.disconnect(); } catch (_) {}
+      }
+
       try {
         await ble.openAdapter();
       } catch (e) {
@@ -345,32 +401,89 @@ Page({
     const id = (e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.id) || "";
     const name = (e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.name) || "";
     if (!id) return;
+    // 任意点击都先关闭弹窗，避免上一次流程残留
+    if (this.data.waitingConfirm) this.setData({ waitingConfirm: false });
+    // 防止快速连点导致并发流程互相 setData/弹窗
+    if (this._connecting) return;
+    this._connecting = true;
+    const token = (++this._tapToken);
+    const locallyTrusted = this._isLocallyTrusted(id);
+    const usedSysLoading = locallyTrusted ? this._showSysLoading("连接中...") : false;
     try {
-      // 先立刻弹出弹窗（覆盖 connect/discover 的间隙）
-      this.setData({ waitingConfirm: true, waitingText: "连接中..." });
+      // 已信任设备：若刚刚被拒绝过（通常是设备端重启/忙），立即重复点击不要进入任何确认弹窗流程
+      // 直接当作“仍被拒绝/未就绪”处理，避免出现“请等待设备确认”的误弹窗。
+      if (locallyTrusted && this._lastTrustedRejectAt && (Date.now() - this._lastTrustedRejectAt) < 2500) {
+        if (usedSysLoading) this._hideSysLoading();
+        try { wx.showToast({ title: "连接被拒绝", icon: "none", duration: 1800 }); } catch (_) {}
+        return;
+      }
+      // 若上一轮流程遗留了弹窗状态（例如未信任流程中途返回），这里先强制关闭，避免已信任设备误弹窗
+      if (locallyTrusted && this.data.waitingConfirm) {
+        this.setData({ waitingConfirm: false });
+      }
+      // 未信任设备才弹确认弹窗；已连接过的设备直接连接
+      if (!locallyTrusted) {
+        if (token === this._tapToken) this.setData({ waitingConfirm: true, waitingText: "连接中..." });
+      }
       try {
         await ble.openAdapter();
       } catch (_) {
-        this.setData({ waitingConfirm: false, waitingText: "请等待设备确认" });
+        if (!locallyTrusted && token === this._tapToken) this.setData({ waitingConfirm: false, waitingText: "请等待设备确认" });
         try { wx.showToast({ title: "请先打开手机蓝牙", icon: "none", duration: 1800 }); } catch (_) {}
         return;
       }
+      if (!locallyTrusted && token === this._tapToken) this.setData({ waitingText: "正在建立连接..." });
       await ble.connect(id);
+      // 服务同步对用户无意义：统一提示设备端操作，避免“卡在同步服务”的误解
+      if (!locallyTrusted && token === this._tapToken) this.setData({ waitingText: "请在 Cody 上确认连接" });
       await ble.discoverAndSubscribe();
       await this._sendPairHello();
-      this.setData({ waitingText: "请等待设备确认" });
+      // 已信任设备：短时间内自动确认并直接进入控制台
+      if (!locallyTrusted && token === this._tapToken) this.setData({ waitingText: "正在确认信任状态..." });
+      const trusted = await this._checkTrustedQuickly();
+      if (trusted) {
+        this._saveKnownDevice(id, name);
+        if (!locallyTrusted && token === this._tapToken) this.setData({ waitingConfirm: false });
+        if (usedSysLoading) this._hideSysLoading();
+        this._goConsoleOnce();
+        return;
+      }
+
+      if (locallyTrusted) {
+        // 已信任设备不应该进入“等待确认”流程；若未能在短窗口确认，视为被拒绝/未就绪
+        throw new Error("连接被拒绝");
+      }
+
+      // 未信任设备：才进入等待确认
+      if (token === this._tapToken) this.setData({ waitingText: "请等待设备确认" });
       await this._waitDeviceConfirm();
       this._saveKnownDevice(id, name);
+      if (token === this._tapToken) this.setData({ waitingConfirm: false });
+      if (usedSysLoading) this._hideSysLoading();
       this._goConsoleOnce();
     } catch (err) {
       ble.log("connect FAIL: " + ((err && err.message) || String(err)));
+      try { await ble.disconnect(); } catch (_) {}
+      if (usedSysLoading) this._hideSysLoading();
       try {
         const msg = String((err && err.message) || "");
+        if (msg.includes("超时") || msg.toLowerCase().includes("timeout")) {
+          wx.showToast({ title: "连接超时，请重试", icon: "none", duration: 1800 });
+        }
+        if (msg.includes("设备已断开") || msg.includes("连接被拒绝")) {
+          wx.showToast({ title: "连接被拒绝", icon: "none", duration: 1800 });
+        }
         if (msg.includes("not available") || msg.includes("bluetooth") || msg.includes("adapter")) {
           wx.showToast({ title: "请先打开手机蓝牙", icon: "none", duration: 1800 });
         }
       } catch (_) {}
-      this.setData({ waitingConfirm: false, waitingText: "请等待设备确认" });
+      // 记录“已信任设备被拒绝”的时间窗，用于抑制立即重复点击带来的异常弹窗状态
+      if (locallyTrusted) this._lastTrustedRejectAt = Date.now();
+      // 无论如何，已信任设备不应该留下 waitingConfirm=true
+      if (locallyTrusted && this.data.waitingConfirm) this.setData({ waitingConfirm: false });
+      if (!locallyTrusted && token === this._tapToken) this.setData({ waitingConfirm: false, waitingText: "请等待设备确认" });
+    } finally {
+      if (token === this._tapToken) this._connecting = false;
     }
   },
 

@@ -1,0 +1,13 @@
+<scroll-view class="pageScroll" scroll-y="{{canScroll}}" enhanced="{{true}}" bounces="{{false}}" show-scrollbar="{{false}}" scroll-with-animation="{{false}}">
+<view class="container">
+  <view class="card">
+    <view class="mono">连接：{{connected ? "OK" : "未连接"}}</view>
+    <view class="mono" style="margin-top:6px;">当前连接的Cody名称：{{codyName || "-"}}</view>
+    <view class="mono" style="margin-top:6px;">当前设备名称：{{deviceName || "-"}}</view>
+    <view class="row" style="margin-top:10px;">
+      <button class="btn secondary" bindtap="onDisconnectBle" disabled="{{!connected}}">断开与Cody的连接</button>
+    </view>
+  </view>
+</view>
+</scroll-view>
+

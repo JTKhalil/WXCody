@@ -1,0 +1,51 @@
+<scroll-view class="pageScroll" scroll-y="{{canScroll}}" enhanced="{{true}}" bounces="{{false}}" show-scrollbar="{{false}}" scroll-with-animation="{{false}}">
+<view class="container">
+  <view class="card">
+    <view class="title">笔记轮播</view>
+    <view class="row" style="justify-content:space-between; align-items:center;">
+      <view class="mono">启用轮播</view>
+      <switch checked="{{noteSlideshow}}" bindchange="onNoteSlideshowToggle" />
+    </view>
+    <view class="mono" style="margin-top:10px;">间隔：{{noteInterval}} 秒</view>
+    <slider min="3" max="60" value="{{noteInterval}}" step="1" bindchanging="onNoteIntervalChanging" bindchange="onNoteIntervalChange" />
+  </view>
+
+  <view class="card">
+    <view class="title">{{noteEditIndex>=0 ? "编辑笔记" : "新增笔记"}}</view>
+    <textarea class="input mono" value="{{noteText}}" maxlength="100" placeholder="输入笔记（最多100字）..." bindinput="onNoteTextInput" />
+    <view class="mono small" style="margin-top:6px; text-align:right;">{{noteCharCount}}/100（剩余{{noteCharLeft}}）</view>
+    <view class="row" style="margin-top:10px;">
+      <button class="btn" bindtap="onSaveNote" disabled="{{!connected}}">{{noteEditIndex>=0 ? "保存" : "添加"}}</button>
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="title">历史笔记</view>
+    <view class="noteItem" wx:for="{{notes}}" wx:key="origIndex">
+      <view class="mono" style="margin-bottom:8px; white-space:pre-wrap;">{{item.content}}</view>
+      <view class="noteFooter">
+        <view class="mono small">{{item.time || ""}}</view>
+        <view class="noteActions">
+          <button class="btn secondary smallBtn" bindtap="onPinNote" data-idx="{{item.origIndex}}" disabled="{{!connected}}">
+            {{notePinnedOrig===item.origIndex ? "取消置顶" : "置顶"}}
+          </button>
+          <button class="btn secondary smallBtn" bindtap="onEditNote" data-idx="{{item.origIndex}}">编辑</button>
+          <button class="btn danger smallBtn" bindtap="onDeleteNote" data-idx="{{item.origIndex}}" disabled="{{!connected}}">删除</button>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view wx:if="{{confirmOpen}}" class="overlay show" catchtap="onCancelConfirm">
+    <view class="modal" catchtap="noop">
+      <view class="modalTitle">系统提示</view>
+      <view class="mono">{{confirmMsg}}</view>
+      <view class="row" style="margin-top:12px;">
+        <button class="btn secondary" bindtap="onCancelConfirm">取消</button>
+        <button class="btn danger" bindtap="onOkConfirm">确定</button>
+      </view>
+    </view>
+  </view>
+</view>
+</scroll-view>
+

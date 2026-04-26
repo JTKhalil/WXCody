@@ -1,6 +1,6 @@
 .container {
   min-height: 100vh;
-  background: #121214;
+  background: #000;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -23,7 +23,7 @@
 
 .sub {
   margin-top: 10px;
-  font-size: 12px;
+  font-size: 14px;
   color: #aaa;
 }
 

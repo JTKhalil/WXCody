@@ -13,6 +13,16 @@ const SERVICE_UUID = "0000C0DE-0000-1000-8000-00805F9B34FB";
 const RX_UUID = "0000C0D1-0000-1000-8000-00805F9B34FB";
 const TX_UUID = "0000C0D2-0000-1000-8000-00805F9B34FB";
 
+function withTimeout(promise, timeoutMs, msg) {
+  let t = 0;
+  const timeoutP = new Promise((_, reject) => {
+    t = setTimeout(() => reject(new Error(msg || "timeout")), timeoutMs);
+  });
+  return Promise.race([promise, timeoutP]).finally(() => {
+    if (t) clearTimeout(t);
+  });
+}
+
 export class BleCodyClient {
   state = { adapterReady: false, scanning: false, connected: false };
 
@@ -29,6 +39,10 @@ export class BleCodyClient {
   _adapterInited = false;
   _writeQ = Promise.resolve();
   _readyQ = Promise.resolve();
+  /** 手绘笔迹世代：清屏 bump 后，队列中旧世代的写入会被丢弃，避免清屏后仍画出未同步笔迹 */
+  _handdrawStrokeGen = 0;
+  /** 你画我猜：页面与 App.onHide 据此在退出/切后台时通知 Cody 收起倒计时与答案 */
+  _handdrawGuessGameActive = false;
 
   _logMaxLines = 500;
   _logLines = [];
@@ -63,6 +77,17 @@ export class BleCodyClient {
 
   emitConn(connected) {
     for (const cb of this.onConnHandlers) cb(connected);
+    // 全局兜底：蓝牙断开时回到连接页，避免停留在控制台/设置等页面造成“假在线”
+    try {
+      if (connected) return;
+      this._handdrawGuessGameActive = false;
+      const pages = (typeof getCurrentPages === "function") ? getCurrentPages() : [];
+      const cur = pages && pages.length ? pages[pages.length - 1] : null;
+      const route = (cur && cur.route) ? String(cur.route) : "";
+      // 连接页/闪屏页不跳转，避免循环
+      if (route === "pages/connect/connect" || route === "pages/splash/splash") return;
+      wx.reLaunch({ url: "/pages/connect/connect" });
+    } catch (_) {}
   }
 
   emitJson(obj) {
@@ -81,6 +106,38 @@ export class BleCodyClient {
 
   clearLogs() {
     this._logLines = [];
+  }
+
+  getHanddrawStrokeGeneration() {
+    return this._handdrawStrokeGen;
+  }
+
+  bumpHanddrawStrokeGeneration() {
+    this._handdrawStrokeGen = (this._handdrawStrokeGen + 1) >>> 0;
+  }
+
+  setHanddrawGuessGameActive(v) {
+    this._handdrawGuessGameActive = !!v;
+  }
+
+  /**
+   * 小程序切后台或被关闭时（App.onHide）调用：若你画我猜进行中则通知设备结束，去掉倒计时与答案展示。
+   */
+  endHanddrawGuessGameIfAppBackground() {
+    if (!this._handdrawGuessGameActive) return;
+    this._handdrawGuessGameActive = false;
+    if (!this.state.connected) return;
+    const run = async () => {
+      const dismiss = { cmd: "guess_game_end", reveal: false };
+      try {
+        await this.sendJsonStopAndWait(dismiss, { timeoutMs: 2200, retries: 2 });
+      } catch (_) {
+        try {
+          await this.sendJson(dismiss);
+        } catch (e2) {}
+      }
+    };
+    run().catch(() => {});
   }
 
   getLogs() {
@@ -378,13 +435,18 @@ export class BleCodyClient {
   }
 
   async connect(deviceId) {
-    await p((resolve, reject) => {
-      wx.createBLEConnection({
-        deviceId,
-        success: () => resolve(),
-        fail: (e) => reject(new Error((e && e.errMsg) || "createBLEConnection failed")),
-      });
-    });
+    const timeoutMs = 8000;
+    await withTimeout(
+      p((resolve, reject) => {
+        wx.createBLEConnection({
+          deviceId,
+          success: () => resolve(),
+          fail: (e) => reject(new Error((e && e.errMsg) || "createBLEConnection failed")),
+        });
+      }),
+      timeoutMs,
+      "createBLEConnection timeout"
+    );
     this.state.connected = true;
     this.state.deviceId = deviceId;
   }
@@ -408,6 +470,10 @@ export class BleCodyClient {
     this.state.txCharId = undefined;
     this._jsonBuf = "";
     this._jsonBytes = new Uint8Array(0);
+    // 重要：断开后重置写队列，避免上一次 write 悬挂导致后续永远卡住
+    this._writeQ = Promise.resolve();
+    this._readyQ = Promise.resolve();
+    this._handdrawStrokeGen = 0;
   }
 
   async reconnect() {
@@ -420,26 +486,35 @@ export class BleCodyClient {
   async discoverAndSubscribe() {
     const deviceId = must(this.state.deviceId, "no deviceId");
 
-    const services = await p((resolve, reject) => {
-      wx.getBLEDeviceServices({
-        deviceId,
-        success: resolve,
-        fail: (e) => reject(new Error((e && e.errMsg) || "getBLEDeviceServices failed")),
-      });
-    });
+    const stepTimeoutMs = 6000;
+    const services = await withTimeout(
+      p((resolve, reject) => {
+        wx.getBLEDeviceServices({
+          deviceId,
+          success: resolve,
+          fail: (e) => reject(new Error((e && e.errMsg) || "getBLEDeviceServices failed")),
+        });
+      }),
+      stepTimeoutMs,
+      "getBLEDeviceServices timeout"
+    );
 
     const svc = (services.services || []).find((s) => normUuid(s.uuid) === normUuid(SERVICE_UUID));
     if (!svc) throw new Error("service not found: " + SERVICE_UUID);
     this.state.serviceId = svc.uuid;
 
-    const chars = await p((resolve, reject) => {
-      wx.getBLEDeviceCharacteristics({
-        deviceId,
-        serviceId: svc.uuid,
-        success: resolve,
-        fail: (e) => reject(new Error((e && e.errMsg) || "getBLEDeviceCharacteristics failed")),
-      });
-    });
+    const chars = await withTimeout(
+      p((resolve, reject) => {
+        wx.getBLEDeviceCharacteristics({
+          deviceId,
+          serviceId: svc.uuid,
+          success: resolve,
+          fail: (e) => reject(new Error((e && e.errMsg) || "getBLEDeviceCharacteristics failed")),
+        });
+      }),
+      stepTimeoutMs,
+      "getBLEDeviceCharacteristics timeout"
+    );
 
     const rx = (chars.characteristics || []).find((c) => normUuid(c.uuid) === normUuid(RX_UUID));
     const tx = (chars.characteristics || []).find((c) => normUuid(c.uuid) === normUuid(TX_UUID));
@@ -460,30 +535,38 @@ export class BleCodyClient {
     try {
       if (wx.canIUse && wx.canIUse("setBLEMTU")) {
         const desired = 247;
-        await p((resolve) => {
-          wx.setBLEMTU({
-            deviceId,
-            mtu: desired,
-            success: (res) => {
-              try { this.state.mtu = Number(res && res.mtu) || desired; } catch (_) { this.state.mtu = desired; }
-              resolve();
-            },
-            fail: () => resolve(),
-          });
-        });
+        await withTimeout(
+          p((resolve) => {
+            wx.setBLEMTU({
+              deviceId,
+              mtu: desired,
+              success: (res) => {
+                try { this.state.mtu = Number(res && res.mtu) || desired; } catch (_) { this.state.mtu = desired; }
+                resolve();
+              },
+              fail: () => resolve(),
+            });
+          }),
+          2000,
+          "setBLEMTU timeout"
+        );
       }
     } catch (_) {}
 
-    await p((resolve, reject) => {
-      wx.notifyBLECharacteristicValueChange({
-        deviceId,
-        serviceId: svc.uuid,
-        characteristicId: tx.uuid,
-        state: true,
-        success: () => resolve(),
-        fail: (e) => reject(new Error((e && e.errMsg) || "notifyBLECharacteristicValueChange failed")),
-      });
-    });
+    await withTimeout(
+      p((resolve, reject) => {
+        wx.notifyBLECharacteristicValueChange({
+          deviceId,
+          serviceId: svc.uuid,
+          characteristicId: tx.uuid,
+          state: true,
+          success: () => resolve(),
+          fail: (e) => reject(new Error((e && e.errMsg) || "notifyBLECharacteristicValueChange failed")),
+        });
+      }),
+      stepTimeoutMs,
+      "notifyBLECharacteristicValueChange timeout"
+    );
   }
 
   async _ensureReady() {
@@ -503,7 +586,11 @@ export class BleCodyClient {
     });
     await this._readyQ;
 
+    const strokeGen = opts && typeof opts.handdrawStrokeGen === "number" ? opts.handdrawStrokeGen : null;
     this._writeQ = this._writeQ.then(async () => {
+      if (strokeGen !== null && strokeGen !== this._handdrawStrokeGen) {
+        return;
+      }
       const deviceId = must(this.state.deviceId, "no deviceId");
       const serviceId = must(this.state.serviceId, "no serviceId");
       const characteristicId = must(this.state.rxCharId, "no rxCharId");
@@ -526,20 +613,24 @@ export class BleCodyClient {
       const canWriteType = !!(wx.canIUse && wx.canIUse("writeBLECharacteristicValue.writeType"));
 
       const writeOnce = async (part) => {
-        await p((resolve, reject) => {
-          const args = {
-            deviceId,
-            serviceId,
-            characteristicId,
-            value: part.buffer.slice(part.byteOffset, part.byteOffset + part.byteLength),
-            success: () => resolve(),
-            fail: (e) => reject(new Error((e && e.errMsg) || "writeBLECharacteristicValue failed")),
-          };
-          if (wantNoResp && canWriteType) {
-            args.writeType = "writeNoResponse";
-          }
-          wx.writeBLECharacteristicValue(args);
-        });
+        await withTimeout(
+          p((resolve, reject) => {
+            const args = {
+              deviceId,
+              serviceId,
+              characteristicId,
+              value: part.buffer.slice(part.byteOffset, part.byteOffset + part.byteLength),
+              success: () => resolve(),
+              fail: (e) => reject(new Error((e && e.errMsg) || "writeBLECharacteristicValue failed")),
+            };
+            if (wantNoResp && canWriteType) {
+              args.writeType = "writeNoResponse";
+            }
+            wx.writeBLECharacteristicValue(args);
+          }),
+          2500,
+          "writeBLECharacteristicValue timeout"
+        );
       };
 
       if (kind === "bin") {
@@ -557,6 +648,9 @@ export class BleCodyClient {
       const mtu = Number(this.state.mtu) || 0;
       const kChunk = (mtu >= 60) ? Math.min(180, Math.max(20, mtu - 3)) : 20;
       for (let off = 0; off < u8.length; off += kChunk) {
+        if (strokeGen !== null && strokeGen !== this._handdrawStrokeGen) {
+          return;
+        }
         const part = u8.subarray(off, Math.min(u8.length, off + kChunk));
         await writeOnce(part);
         if (perChunkDelayMs > 0 && off + kChunk < u8.length) {
@@ -571,7 +665,7 @@ export class BleCodyClient {
   /**
    * 手绘线段：二进制单帧（~16B），优先于 JSON draw_stroke，减少分片与解析开销。
    */
-  async sendHanddrawStrokeBin(seg) {
+  async sendHanddrawStrokeBin(seg, enqueueGen) {
     const x0 = Number(seg.x0) || 0;
     const y0 = Number(seg.y0) || 0;
     const x1 = Number(seg.x1) || 0;
@@ -581,20 +675,22 @@ export class BleCodyClient {
     const pl = buildHanddrawStrokePayload(x0, y0, x1, y1, c, w);
     const { session, seq } = this.nextSessionSeq();
     const frame = buildFrame(FrameType.HanddrawStroke, session, seq, pl);
-    await this.write(frame, { kind: "bin" });
+    const gen = typeof enqueueGen === "number" ? enqueueGen : this._handdrawStrokeGen;
+    await this.write(frame, { kind: "bin", handdrawStrokeGen: gen });
   }
 
   /** 多段合并一帧，减少 write 次数与主机调度延迟 */
-  async sendHanddrawStrokeBatchBin(segs) {
+  async sendHanddrawStrokeBatchBin(segs, enqueueGen) {
     const list = Array.isArray(segs) ? segs : [];
     if (!list.length) return;
     if (list.length === 1) {
-      return this.sendHanddrawStrokeBin(list[0]);
+      return this.sendHanddrawStrokeBin(list[0], enqueueGen);
     }
     const pl = buildHanddrawStrokeBatchPayload(list);
     const { session, seq } = this.nextSessionSeq();
     const frame = buildFrame(FrameType.HanddrawStrokeBatch, session, seq, pl);
-    await this.write(frame, { kind: "bin" });
+    const gen = typeof enqueueGen === "number" ? enqueueGen : this._handdrawStrokeGen;
+    await this.write(frame, { kind: "bin", handdrawStrokeGen: gen });
   }
 
   async sendJson(obj, opts) {
@@ -608,6 +704,9 @@ export class BleCodyClient {
     }
     if (opts && opts.writeNoResponse) {
       wopts.writeNoResponse = true;
+    }
+    if (opts && typeof opts.handdrawStrokeGen === "number") {
+      wopts.handdrawStrokeGen = opts.handdrawStrokeGen;
     }
     await this.write(utf8Encode(line), wopts);
   }

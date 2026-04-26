@@ -1,7 +1,16 @@
 import { ble } from "../../services/ble";
 import { FrameType } from "../../services/proto_bin";
-
-const IMG_BYTES = 240 * 240 * 2;
+import { getState as getFwUpgradeState, onStateChange as onFwUpgradeStateChange } from "../../services/fw_upgrade";
+import {
+  IMG_BYTES,
+  thumbCacheGet,
+  thumbCacheSet,
+  thumbCacheDel,
+  subscribeImgPullUi,
+  enqueueMissingThumbPulls,
+  mergeBusyPullRows,
+  startThumbPullImmediate,
+} from "../../services/img_thumb_sync";
 /** 控制台底部 Tab：手绘、设置（与设备 displayMode 无关） */
 const TAB_HANDDRAW = 3;
 const TAB_SETTINGS = 4;
@@ -15,10 +24,8 @@ const MODE_SETTINGS_TAB_MAP = {
 // 因此 data 的安全上限约为 180-9(帧开销)-5(字段)=166B。
 const CHUNK_BYTES = 166;
 /** 手绘 BLE：攒够即发，降低屏相对手机的延迟（过小会增加空口包数） */
-const HD_BLE_BATCH_IMMEDIATE = 3;
-const HD_BLE_BATCH_DEBOUNCE_MS = 1;
-
-const THUMB_CACHE_PREFIX = "wxcody_thumb_rgb565_slot_";
+/** 与 proto_bin HANDDRAW_BATCH_MAX 一致 */
+const HD_BLE_BATCH_MAX = 20;
 
 /** 你画我猜词库（1000 词） */
 const HD_GUESS_WORDS = [
@@ -179,36 +186,6 @@ function cmpVer(a, b) {
   return 0;
 }
 
-function cacheKeyForSlot(slot) {
-  return THUMB_CACHE_PREFIX + String(slot);
-}
-
-function thumbCacheGet(slot) {
-  try {
-    const b64 = wx.getStorageSync(cacheKeyForSlot(slot));
-    if (!b64 || typeof b64 !== "string") return null;
-    const ab = wx.base64ToArrayBuffer(b64);
-    const u8 = new Uint8Array(ab);
-    if (u8.length !== IMG_BYTES) return null;
-    return u8;
-  } catch (_) {
-    return null;
-  }
-}
-
-function thumbCacheSet(slot, rgb565) {
-  try {
-    const u8 = rgb565 instanceof Uint8Array ? rgb565 : new Uint8Array(rgb565);
-    if (u8.length !== IMG_BYTES) return;
-    const b64 = wx.arrayBufferToBase64(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength));
-    wx.setStorageSync(cacheKeyForSlot(slot), b64);
-  } catch (_) {}
-}
-
-function thumbCacheDel(slot) {
-  try { wx.removeStorageSync(cacheKeyForSlot(slot)); } catch (_) {}
-}
-
 function clearAllCachesKeepIdentity() {
   // 清空所有小程序缓存（图片/笔记/设备记录等），但保留本机身份（clientId / deviceName）
   try {
@@ -222,10 +199,6 @@ function clearAllCachesKeepIdentity() {
       try { wx.removeStorageSync(k); } catch (_) {}
     }
   } catch (_) {}
-}
-
-function readLe32(b, off) {
-  return ((b[off] | (b[off + 1] << 8) | (b[off + 2] << 16) | (b[off + 3] << 24)) >>> 0);
 }
 
 async function getCanvas2d(page) {
@@ -309,9 +282,13 @@ function hexStringToBytes(hex) {
   return out;
 }
 
-function putRgb565BufferOnCanvas(c2d, bytes) {
+function putRgb565BufferOnCanvas(c2d, bytes, reuse) {
   if (!c2d || !bytes || bytes.length < IMG_BYTES) return;
-  const imageData = c2d.createImageData(240, 240);
+  let imageData = reuse && reuse.imageData;
+  if (!imageData || imageData.width !== 240 || imageData.height !== 240) {
+    imageData = c2d.createImageData(240, 240);
+    if (reuse) reuse.imageData = imageData;
+  }
   rgb565ToImageData(bytes, imageData);
   c2d.putImageData(imageData, 0, 0);
 }
@@ -425,6 +402,10 @@ Page({
     fwBusyMode: "",
     fwPercent: 0,
     fwStatus: "",
+    /** 顶部后台升级进度条（更新设置页触发） */
+    fwBgRunning: false,
+    fwBgPercent: 0,
+    fwBgStatus: "",
     brightness: 255,
 
     hdPenHex: "#ffffff",
@@ -465,9 +446,6 @@ Page({
   _slotsDirty: false,
   _thumbCtx: null,
   _workCtx: null,
-  _pull: null,
-  _pullQueue: null,
-  _pullQueueRunning: false,
   _confirmAction: "",
   _brightT: 0,
   _unsubs: null,
@@ -490,6 +468,12 @@ Page({
   _hdBleBatch: null,
   _hdBleBatchTimer: 0,
   _hdGuessTimer: 0,
+  _hdRgb565PutReuse: null,
+  _hdPaintRafPending: false,
+
+  /** 模式切换页：定时拉取 get_mode，同步设备端手动切换 */
+  _modePollId: 0,
+  _unsubFwUpgrade: null,
 
   onLoad(options) {
     // 从模式页“设置”按钮打开：作为一个新的页面实例显示指定 tab，并隐藏底部 tabs
@@ -500,7 +484,6 @@ Page({
 
     this._slotsCache = (this.data.slots || []).map((s) => ({ ...s }));
     this._thumbCtx = {};
-    this._pullQueue = [];
     this._cancelUploadSlots = new Set();
 
     const unsubs = [];
@@ -508,7 +491,10 @@ Page({
     unsubs.push(ble.onConnectionStateChange((connected) => {
       this.syncState();
       this.setData({ status: connected ? "已连接" : "已断开" });
-      if (!connected) this._stopHanddrawModePoll();
+      if (!connected) {
+        this._stopHanddrawModePoll();
+        this._stopModePoll();
+      }
       this.scheduleUiRefresh(true);
       // 断线时不再保持 modal
       if (!connected) {
@@ -551,6 +537,14 @@ Page({
       this._disconnectRedirecting = false;
       this._syncTimeFromPhone().catch(() => {});
     }
+
+    // 订阅后台固件升级状态（用于控制台顶部进度条）
+    try {
+      this._applyFwUpgradeState(getFwUpgradeState());
+      if (!this._unsubFwUpgrade) {
+        this._unsubFwUpgrade = onFwUpgradeStateChange((s) => this._applyFwUpgradeState(s));
+      }
+    } catch (_) {}
     // 不主动刷新 log，避免大量 setData
     // 初次进入：延迟一次轻量刷新，避免刚跳转就并发 discover/write
     setTimeout(() => {
@@ -614,6 +608,21 @@ Page({
     // 去掉左上角 home 胶囊按钮（微信提供的“返回/主页”按钮）
     try { wx.hideHomeButton(); } catch (_) {}
     setTimeout(() => this._updateCanScroll(), 80);
+    // 返回页面时：若停留在模式切换页，则立刻刷新一次当前模式并开始同步
+    if (Number(this.data.activeTab) === 0) {
+      this.onRefreshMode().catch(() => {});
+      this._startModePoll();
+    }
+    // 从「图库设置 / 存储 / 亮度」等子页返回：图库 tab 的 canvas 可能已重建，previewReady 仍为 true 会跳过重绘导致黑屏
+    if (Number(this.data.activeTab) === 1 && ble.state.connected) {
+      this._forceThumbRedrawOnce = true;
+      this._thumbCtx = {};
+      this._ensureThumbCanvases();
+      setTimeout(() => {
+        if (Number(this.data.activeTab) !== 1) return;
+        this._ensureThumbFromCacheOrPull().catch(() => {});
+      }, 120);
+    }
   },
 
   async _syncTimeFromPhone() {
@@ -675,6 +684,8 @@ Page({
   },
 
   onUnload() {
+    // 若离开页面时你画我猜仍在进行，主动结束（避免设备端继续计时/锁状态）
+    this._stopGuessGameOnLeave();
     if (this._uiT) clearTimeout(this._uiT);
     this._uiT = 0;
     if (this._brightT) clearTimeout(this._brightT);
@@ -696,6 +707,7 @@ Page({
       try { clearTimeout(this._hdGuessTimer); } catch (_) {}
       this._hdGuessTimer = 0;
     }
+    this._stopModePoll();
     this._stopHanddrawModePoll();
     this._workCtx = null;
     this._hdCtx = null;
@@ -705,6 +717,55 @@ Page({
       try { u(); } catch (_) {}
     }
     this._unsubs = null;
+    try { if (this._unsubFwUpgrade) this._unsubFwUpgrade(); } catch (_) {}
+    this._unsubFwUpgrade = null;
+  },
+
+  _applyFwUpgradeState(s) {
+    const st = s || {};
+    const running = !!st.running;
+    const pct = Number(st.percent);
+    const percent = Number.isFinite(pct) ? pct : 0;
+    const status = String(st.status || "");
+    // 仅控制顶部展示，不影响 settings tab 的 fw* 字段
+    if (running || percent > 0) {
+      this.setData({ fwBgRunning: running, fwBgPercent: percent, fwBgStatus: status });
+    } else if (this.data.fwBgRunning || this.data.fwBgPercent) {
+      this.setData({ fwBgRunning: false, fwBgPercent: 0, fwBgStatus: "" });
+    }
+  },
+
+  onHide() {
+    // 返回/离开控制台页时：若你画我猜进行中则停止
+    this._stopGuessGameOnLeave();
+  },
+
+  _stopGuessGameOnLeave() {
+    const active =
+      this.data && (this.data.hdGuessPlaying || this.data.hdGuessStarting);
+    if (!active) return;
+    if (this._hdGuessTimer) {
+      try { clearTimeout(this._hdGuessTimer); } catch (_) {}
+      this._hdGuessTimer = 0;
+    }
+    try {
+      if (ble && ble.state && ble.state.connected) {
+        ble
+          .sendJsonStopAndWait({ cmd: "guess_game_end", reveal: false }, { timeoutMs: 2200, retries: 2 })
+          .catch(() => ble.sendJson({ cmd: "guess_game_end", reveal: false }).catch(() => {}));
+      }
+    } catch (_) {}
+    try {
+      this.setData({
+        hdGuessPlaying: false,
+        hdGuessPrompt: "",
+        hdGuessStarting: false,
+        hdGuessRevealBlock: true,
+      });
+    } catch (_) {}
+    try {
+      ble.setHanddrawGuessGameActive(false);
+    } catch (_) {}
   },
 
   async onReady() {
@@ -785,6 +846,38 @@ Page({
     this.scheduleUiRefresh();
   },
 
+  _applyImgThumbSyncSnap(snap) {
+    for (const ev of snap.events || []) {
+      if (ev.type === "pull_ok") {
+        this.setSlotProgress(ev.slot, false, "", 0);
+        this.setSlotStatus(ev.slot, ev.status || "pull OK");
+        const cached = thumbCacheGet(ev.slot);
+        if (cached) {
+          this._renderThumbFromRgb565(ev.slot, cached)
+            .then(() => {
+              this._slotsCache = (this._slotsCache || this.data.slots || []).map((s) =>
+                (s.slot === ev.slot ? { ...s, hasImage: true, previewReady: true } : s)
+              );
+              this._slotsDirty = true;
+              this.scheduleUiRefresh(true);
+            })
+            .catch(() => {});
+        }
+      } else if (ev.type === "pull_fail") {
+        this.setSlotProgress(ev.slot, false, "", 0);
+        this.setSlotStatus(ev.slot, ev.message || "pull fail");
+        this.scheduleUiRefresh(true);
+      }
+    }
+    const meta = snap.slotMeta || {};
+    for (const k of Object.keys(meta)) {
+      const slot = Number(k);
+      const m = meta[k];
+      this.setSlotProgress(slot, !!m.busy, "", m.progressPct || 0);
+      if (m.status) this.setSlotStatus(slot, m.status);
+    }
+  },
+
   async onTab(evt) {
     const tab = Number((evt && evt.currentTarget && evt.currentTarget.dataset && evt.currentTarget.dataset.tab) || 0);
     if (this.data.hdGuessPlaying && tab !== TAB_HANDDRAW) {
@@ -802,6 +895,11 @@ Page({
     } else {
       this._stopHanddrawModePoll();
     }
+    if (tab === 0) {
+      this._startModePoll();
+    } else {
+      this._stopModePoll();
+    }
     // 只 setData 一次，避免切换时 UI 不稳定
     this.setData({ activeTab: tab, status: "切换 Tab -> " + tab }, () => {
       this._updateHanddrawBlockState();
@@ -812,6 +910,11 @@ Page({
     // 默认策略：仅“首次进入该 tab”时刷新，后续切换不重复拉取（避免卡顿/流量浪费）。
     const loaded = !!(this._tabLoaded && this._tabLoaded[tab]);
     if (loaded) {
+      // 模式切换页：每次切回都刷新一次，确保设备端手动切模式能同步选中态
+      if (tab === 0) {
+        try { await this._syncTimeFromPhone(); } catch (_) {}
+        await this.onRefreshMode();
+      }
       // Gallery: 切回时 canvas 会重建，需要重绘缩略图，但不必再次拉取 image_info
       if (tab === 1) {
         this._ensureGalleryFrameHandler();
@@ -854,6 +957,7 @@ Page({
     } catch (_) {}
     if (this._tabLoaded) this._tabLoaded[tab] = true;
     this.scheduleUiRefresh(true);
+    this._updateCanScroll();
   },
 
   async _syncHanddrawStatus() {
@@ -1037,6 +1141,30 @@ Page({
     tick();
   },
 
+  _stopModePoll() {
+    if (this._modePollId) {
+      try { clearInterval(this._modePollId); } catch (_) {}
+      this._modePollId = 0;
+    }
+  },
+
+  _startModePoll() {
+    if (this._modePollId) return;
+    const tick = async () => {
+      if (Number(this.data.activeTab) !== 0 || !ble.state.connected) return;
+      try {
+        const r = await ble.sendJsonStopAndWait({ cmd: "get_mode" }, { timeoutMs: 700, retries: 1 });
+        this._syncGuessRevealFromModeResponse(r);
+        const m = Number(r && r.mode);
+        if (Number.isFinite(m) && m !== Number(this.data.modeCurrent)) {
+          this.setData({ modeCurrent: m }, () => this._updateHanddrawBlockState());
+        }
+      } catch (_) {}
+    };
+    this._modePollId = setInterval(tick, 1200);
+    tick();
+  },
+
   /**
    * 再次进入手绘 Tab：不重拉 meta/整图，优先用缓存同步重绘画布（不主动 set_mode，由用户在设备或「模式」里切手绘）。
    */
@@ -1050,7 +1178,7 @@ Page({
       const pack = this._hdCtx && this._hdCtx.canvasDraw;
       const c2d = pack && pack.ctx;
       if (c2d) {
-        putRgb565BufferOnCanvas(c2d, this._hdRgb565Cache);
+        this._putHanddrawRgb565OnCanvas(c2d, this._hdRgb565Cache);
       } else {
         await this._attachHanddrawCanvasAndPaint(this._hdRgb565Cache, TAB_HANDDRAW);
       }
@@ -1168,7 +1296,7 @@ Page({
     try {
       const pack = await getCanvas2dById(this, "canvasDraw", 240);
       const c2d = pack && pack.ctx;
-      if (c2d) putRgb565BufferOnCanvas(c2d, bytes);
+      if (c2d) this._putHanddrawRgb565OnCanvas(c2d, bytes);
       this._hdCtx.canvasDraw = pack;
       // 记录当前画板显示尺寸，用于触摸坐标映射（画布 CSS 可能被放大）
       this._measureHdCanvasCssSize();
@@ -1237,21 +1365,24 @@ Page({
     if (!batch || !batch.length) return;
     this._hdBleBatch = [];
     const copy = batch.slice();
+    const batchGen = typeof ble.getHanddrawStrokeGeneration === "function" ? ble.getHanddrawStrokeGeneration() : 0;
     const run = () => {
       if (typeof ble.sendHanddrawStrokeBatchBin === "function") {
-        return ble.sendHanddrawStrokeBatchBin(copy);
+        return ble.sendHanddrawStrokeBatchBin(copy, batchGen);
       }
       if (typeof ble.sendHanddrawStrokeBin === "function") {
         let p = Promise.resolve();
         for (const s of copy) {
-          p = p.then(() => ble.sendHanddrawStrokeBin(s));
+          p = p.then(() => ble.sendHanddrawStrokeBin(s, batchGen));
         }
         return p;
       }
       let p = Promise.resolve();
       for (const s of copy) {
         const payload = { cmd: "draw_stroke", x0: s.x0, y0: s.y0, x1: s.x1, y1: s.y1, c: s.c, w: s.w };
-        p = p.then(() => ble.sendJson(payload, { interChunkDelayMs: 0, writeNoResponse: true }));
+        p = p.then(() =>
+          ble.sendJson(payload, { interChunkDelayMs: 0, writeNoResponse: true, handdrawStrokeGen: batchGen })
+        );
       }
       return p;
     };
@@ -1263,6 +1394,50 @@ Page({
   async _awaitHanddrawBleIdle() {
     this._flushHdBleBatchNow();
     await (this._hdBleSendChain || Promise.resolve());
+  },
+
+  _putHanddrawRgb565OnCanvas(c2d, bytes) {
+    if (!c2d || !(bytes instanceof Uint8Array) || bytes.length < IMG_BYTES) return;
+    if (!this._hdRgb565PutReuse) this._hdRgb565PutReuse = { imageData: null };
+    putRgb565BufferOnCanvas(c2d, bytes, this._hdRgb565PutReuse);
+  },
+
+  _flushHdCanvasPaintNow() {
+    const pack = this._hdCtx && this._hdCtx.canvasDraw;
+    const bytes = this._hdRgb565Cache;
+    if (!pack || !pack.ctx || !(bytes instanceof Uint8Array) || bytes.length !== IMG_BYTES) return;
+    this._putHanddrawRgb565OnCanvas(pack.ctx, bytes);
+  },
+
+  _scheduleHdCanvasPaint() {
+    if (this._hdPaintRafPending) return;
+    this._hdPaintRafPending = true;
+    const canvas = this._hdCtx && this._hdCtx.canvasDraw && this._hdCtx.canvasDraw.canvas;
+    const done = () => {
+      this._hdPaintRafPending = false;
+      this._flushHdCanvasPaintNow();
+      if (this._hdBleBatch && this._hdBleBatch.length) {
+        this._flushHdBleBatchNow();
+      }
+    };
+    try {
+      if (canvas && typeof canvas.requestAnimationFrame === "function") {
+        canvas.requestAnimationFrame(done);
+      } else {
+        setTimeout(done, 0);
+      }
+    } catch (_) {
+      done();
+    }
+  },
+
+  _discardHanddrawBlePending() {
+    try {
+      if (typeof ble.bumpHanddrawStrokeGeneration === "function") ble.bumpHanddrawStrokeGeneration();
+    } catch (_) {}
+    this._cancelHdBleBatchTimer();
+    this._hdBleBatch = null;
+    this._hdBleSendChain = Promise.resolve();
   },
 
   onHdTouchStart(e) {
@@ -1304,10 +1479,9 @@ Page({
       const mx1 = 239 - m1.x;
       handdrawRgb565ApplySegment(this._hdRgb565Cache, mx0, m0.y, mx1, m1.y, c, w);
     }
-    const pack = this._hdCtx && this._hdCtx.canvasDraw;
-    if (pack && pack.ctx) putRgb565BufferOnCanvas(pack.ctx, this._hdRgb565Cache);
     this._hdBleBatch = this._hdBleBatch || [];
-    if (this._hdBleBatch.length >= 14) {
+    const extra = this.data.hdMirror ? 2 : 1;
+    if (this._hdBleBatch.length + extra > HD_BLE_BATCH_MAX) {
       this._flushHdBleBatchNow();
     }
     this._hdBleBatch.push({ x0: m0.x, y0: m0.y, x1: m1.x, y1: m1.y, c, w });
@@ -1316,15 +1490,7 @@ Page({
       const mx1 = 239 - m1.x;
       this._hdBleBatch.push({ x0: mx0, y0: m0.y, x1: mx1, y1: m1.y, c, w });
     }
-    if (this._hdBleBatch.length >= HD_BLE_BATCH_IMMEDIATE) {
-      this._flushHdBleBatchNow();
-    } else {
-      this._cancelHdBleBatchTimer();
-      this._hdBleBatchTimer = setTimeout(() => {
-        this._hdBleBatchTimer = 0;
-        this._flushHdBleBatchNow();
-      }, HD_BLE_BATCH_DEBOUNCE_MS);
-    }
+    this._scheduleHdCanvasPaint();
     this._scheduleHanddrawPersist();
     this._hdLast[id] = { x, y };
   },
@@ -1333,8 +1499,52 @@ Page({
     const id = "canvasDraw";
     this._cancelHdBleBatchTimer();
     this._flushHdBleBatchNow();
+    this._hdPaintRafPending = false;
+    this._flushHdCanvasPaintNow();
     if (this._hdLast) this._hdLast[id] = null;
     if (!this._isHanddrawPaintBlocked()) this._flushHanddrawPersist();
+  },
+
+  /**
+   * 与「清屏」按钮一致：丢弃待发笔迹、立刻本地铺底、`handdraw_clear`、按设备背景校正。
+   * @param {{ skipClearingUi?: boolean, silentDeviceFail?: boolean }} opts
+   * @returns {Promise<{ ok: boolean }>}
+   */
+  async _handdrawPerformFullClearNoModal(opts) {
+    const skipClearingUi = !!(opts && opts.skipClearingUi);
+    const silentDeviceFail = !!(opts && opts.silentDeviceFail);
+    if (!skipClearingUi) this.setData({ hdClearing: true });
+    this._discardHanddrawBlePending();
+    const bgLocal = this.data.hdBg || "black";
+    try {
+      if (this._hdLast) this._hdLast.canvasDraw = null;
+      this._hdRgb565Cache = makeSolidHanddrawRgb565(bgLocal);
+      await this._attachHanddrawCanvasAndPaint(this._hdRgb565Cache, TAB_HANDDRAW);
+      this._flushHanddrawPersist();
+    } catch (_) {}
+    this._handdrawBleReady = true;
+    if (!skipClearingUi) this.setData({ hdClearing: false });
+
+    try {
+      await ble.sendJsonStopAndWait({ cmd: "handdraw_clear" }, { timeoutMs: 1500, retries: 2 });
+      const st = await this._syncHanddrawStatus();
+      const bg = st ? st.bg : bgLocal;
+      if (String(bg) !== String(bgLocal)) {
+        if (this._hdLast) this._hdLast.canvasDraw = null;
+        this._hdRgb565Cache = makeSolidHanddrawRgb565(bg);
+        await this._attachHanddrawCanvasAndPaint(this._hdRgb565Cache, TAB_HANDDRAW);
+        this._flushHanddrawPersist();
+      }
+      this._handdrawBleReady = true;
+      return { ok: true };
+    } catch (err) {
+      if (!silentDeviceFail) {
+        this.setData({ status: "清屏失败（需处于手绘模式）" });
+        ble.log("handdraw_clear FAIL: " + ((err && err.message) || String(err)));
+      }
+      this._handdrawBleReady = true;
+      return { ok: false };
+    }
   },
 
   async onHdClear() {
@@ -1357,24 +1567,9 @@ Page({
     } catch (_) {
       return;
     }
-    this.setData({ hdClearing: true });
-    try {
-      await this._awaitHanddrawBleIdle();
-    } catch (_) {}
-    this._cancelHdBleBatchTimer();
-    this._hdBleBatch = null;
-    this._hdBleSendChain = Promise.resolve();
-    try {
-      await ble.sendJsonStopAndWait({ cmd: "handdraw_clear" }, { timeoutMs: 1500, retries: 2 });
-      const st = await this._syncHanddrawStatus();
-      const bg = st ? st.bg : this.data.hdBg;
-      if (this._hdLast) this._hdLast.canvasDraw = null;
-      this._hdRgb565Cache = makeSolidHanddrawRgb565(bg);
-      await this._attachHanddrawCanvasAndPaint(this._hdRgb565Cache, TAB_HANDDRAW);
-      this._flushHanddrawPersist();
+    const r = await this._handdrawPerformFullClearNoModal({});
+    if (r.ok) {
       this._handdrawBleReady = true;
-      // 清屏只清画：若本局仍在进行中，不应打断倒计时/结束游戏。
-      // 若处于揭晓阶段，则清屏会清掉答案并解锁绘画。
       const stillPlaying = !!this.data.hdGuessPlaying;
       const wasReveal = !!this.data.hdGuessRevealBlock;
       if (!stillPlaying && this._hdGuessTimer) {
@@ -1393,12 +1588,6 @@ Page({
         patch.hdGuessPrompt = "";
       }
       this.setData(patch);
-    } catch (err) {
-      this.setData({ status: "清屏失败（需处于手绘模式）" });
-      ble.log("handdraw_clear FAIL: " + ((err && err.message) || String(err)));
-      this._handdrawBleReady = true;
-    } finally {
-      this.setData({ hdClearing: false });
     }
     this.scheduleUiRefresh(true);
   },
@@ -1412,6 +1601,9 @@ Page({
     } catch (_) {
       this.setData({ hdGuessPlaying: false, hdGuessPrompt: "" });
     }
+    try {
+      ble.setHanddrawGuessGameActive(false);
+    } catch (_) {}
     this.scheduleUiRefresh(true);
   },
 
@@ -1420,16 +1612,17 @@ Page({
     if (!w) return;
     this.setData({ hdGuessPlaying: true, hdGuessPrompt: w, hdGuessStarting: true, status: "你画我猜进行中" });
     try {
-      await this._awaitHanddrawBleIdle();
+      ble.setHanddrawGuessGameActive(true);
+    } catch (_) {}
+    try {
+      await this._handdrawPerformFullClearNoModal({ skipClearingUi: true, silentDeviceFail: true });
       // 重新开始一局（用于首次开始与“跳过”）
       await ble.sendJsonStopAndWait({ cmd: "guess_game_start", word: w, seconds: 180 }, { timeoutMs: 2500, retries: 2 });
-      const bg = this.data.hdBg || "black";
-      this._hdRgb565Cache = makeSolidHanddrawRgb565(bg);
-      if (this._hdLast) this._hdLast.canvasDraw = null;
-      await this._attachHanddrawCanvasAndPaint(this._hdRgb565Cache, TAB_HANDDRAW);
-      this._flushHanddrawPersist();
       this._handdrawBleReady = true;
     } catch (e) {
+      try {
+        ble.setHanddrawGuessGameActive(false);
+      } catch (e2) {}
       if (this._hdGuessTimer) {
         try { clearTimeout(this._hdGuessTimer); } catch (_) {}
         this._hdGuessTimer = 0;
@@ -1466,6 +1659,9 @@ Page({
         ble.log("guess_game_end FAIL: " + ((e && e.message) || String(e)));
         this.setData({ hdGuessPlaying: false, hdGuessPrompt: "" });
       }
+      try {
+        ble.setHanddrawGuessGameActive(false);
+      } catch (_) {}
       this.scheduleUiRefresh(true);
       return;
     }
@@ -1500,7 +1696,7 @@ Page({
         try { clearTimeout(this._hdGuessTimer); } catch (_) {}
         this._hdGuessTimer = 0;
       }
-      await ble.sendJsonStopAndWait({ cmd: "guess_game_end" }, { timeoutMs: 1500, retries: 2 });
+      await ble.sendJsonStopAndWait({ cmd: "guess_game_end", reveal: false }, { timeoutMs: 1500, retries: 2 });
     } catch (_) {}
     await this._startGuessGameWithWord(pickRandomGuessWord());
     this.scheduleUiRefresh(true);
@@ -1508,16 +1704,7 @@ Page({
 
   _ensureGalleryFrameHandler() {
     if (this._galleryFrameUnsub) return;
-    this._galleryFrameUnsub = ble.onFrame(async (f) => {
-      if (f.type === FrameType.ImgPullChunk) {
-        await this.onPullChunk(f);
-        return;
-      }
-      if (f.type === FrameType.ImgPullFinish) {
-        await this.onPullFinish(f);
-        return;
-      }
-    });
+    this._galleryFrameUnsub = subscribeImgPullUi((snap) => this._applyImgThumbSyncSnap(snap));
   },
 
   _ensureThumbCanvases() {
@@ -1545,14 +1732,33 @@ Page({
       wx.showToast({ title: "功能还未开放", icon: "none" });
       return;
     }
-    const title =
-      mode === 0 ? "图片模式" :
-      mode === 1 ? "时钟模式" :
-      mode === 2 ? "笔记模式" :
-      mode === 3 ? "表情模式" :
-      mode === 4 ? "手绘模式" :
-      "模式设置";
-    wx.navigateTo({ url: `/pages/console/console?fromModeSettings=1&tab=${tab}&title=${encodeURIComponent(title)}` });
+    if (mode === 0) {
+      wx.navigateTo({ url: "/pages/mode/image/image" });
+      return;
+    }
+    if (mode === 2) {
+      wx.navigateTo({ url: "/pages/mode/note/note" });
+      return;
+    }
+    if (mode === 4) {
+      wx.navigateTo({ url: "/pages/mode/handdraw/handdraw" });
+      return;
+    }
+    wx.showToast({ title: "功能还未开放", icon: "none" });
+  },
+
+  onOpenSystemSettings(evt) {
+    const page = String((evt && evt.currentTarget && evt.currentTarget.dataset && evt.currentTarget.dataset.page) || "").trim();
+    const map = {
+      conn: "/pages/settings/conn",
+      fs: "/pages/settings/fs",
+      fw: "/pages/settings/fw",
+      bright: "/pages/settings/bright",
+      danger: "/pages/settings/danger",
+    };
+    const url = map[page];
+    if (!url) return;
+    wx.navigateTo({ url });
   },
 
   async onReconnect() {
@@ -1741,6 +1947,7 @@ Page({
         if (slotsOut.find((x) => x.slot === ps.slot)) continue;
         slotsOut.push({ ...ps });
       }
+      mergeBusyPullRows(slotsOut);
       if (!slotsOut.length) {
         slotsOut.push({ slot: 0, status: "-", hasImage: false, previewReady: false, busy: false, progressText: "", progressPct: 0 });
       }
@@ -1789,13 +1996,8 @@ Page({
               this._ensureThumbCanvases();
               this._ensureThumbFromCacheOrPull().catch(() => {});
             }, 120);
-          } else {
-            // 如果渲染失败且不忙，走拉取；忙时不要并发拉取
-            if (!s.busy) this._enqueuePull(s.slot);
           }
         }
-      } else {
-        if (!s.busy) this._enqueuePull(s.slot);
       }
     }
     this._forceThumbRedrawOnce = false;
@@ -1803,127 +2005,14 @@ Page({
       this._slotsDirty = true;
       this.scheduleUiRefresh(true);
     }
-    this._runPullQueue();
-  },
-
-  _enqueuePull(slot) {
-    if (!this._pullQueue) this._pullQueue = [];
-    if (this._pullQueue.includes(slot)) return;
-    this._pullQueue.push(slot);
-  },
-
-  async _runPullQueue() {
-    if (this._pullQueueRunning) return;
-    this._pullQueueRunning = true;
-    try {
-      while (ble.state.connected && this._pullQueue && this._pullQueue.length) {
-        if (this._pull) break; // 正在拉取
-        const slot = this._pullQueue.shift();
-        if (!Number.isFinite(slot)) continue;
-        const cur = (this._slotsCache || this.data.slots || []).find((x) => x.slot === slot);
-        if (!cur || !cur.hasImage || cur.previewReady) continue;
-        await this._pullSlot(slot);
-      }
-    } finally {
-      this._pullQueueRunning = false;
-    }
-  },
-
-  async _pullSlot(slot) {
-    if (!ble.state.connected) return;
-    try {
-      this.setSlotProgress(slot, true, "", 0);
-      this.setSlotStatus(slot, "pulling...");
-      this._pull = { slot, buf: new Uint8Array(IMG_BYTES), got: 0, done: false };
-      await ble.sendFrameStopAndWait(FrameType.ImgPullBegin, new Uint8Array([slot & 0xff]), { timeoutMs: 800, retries: 3 });
-      this.scheduleUiRefresh();
-    } catch (e) {
-      this._pull = null;
-      this.setSlotProgress(slot, false, "", 0);
-      this.setSlotStatus(slot, "pull fail");
-      ble.log("PULL_BEGIN FAIL: " + ((e && e.message) || String(e)));
-      this.scheduleUiRefresh(true);
-    }
+    enqueueMissingThumbPulls(slots);
   },
 
   // ---------------- Gallery pull/push (binary frames) ----------------
   async onPull(evt) {
     const slot = Number((evt && evt.currentTarget && evt.currentTarget.dataset && evt.currentTarget.dataset.slot) ?? 0);
     if (!ble.state.connected) return;
-    if (this._pull) return; // 单通道，避免并发拉取
-    await this._pullSlot(slot);
-  },
-
-  async onPullChunk(f) {
-    const pl = new Uint8Array(f.payload);
-    if (pl.length < 1 + 4) return;
-    const slot = pl[0];
-    const off = readLe32(pl, 1);
-    const bytes = pl.subarray(5);
-
-    const ctx = this._pull;
-    if (!ctx || ctx.done) {
-      await ble.sendAck(f.session, f.seq, FrameType.ImgPullChunk, 0);
-      return;
-    }
-    if (slot !== (ctx.slot & 0xff)) {
-      await ble.sendAck(f.session, f.seq, FrameType.ImgPullChunk, 1);
-      return;
-    }
-    if (off + bytes.length > ctx.buf.length) {
-      await ble.sendAck(f.session, f.seq, FrameType.ImgPullChunk, 3);
-      return;
-    }
-
-    ctx.buf.set(bytes, off);
-    ctx.got = Math.max(ctx.got, off + bytes.length);
-    await ble.sendAck(f.session, f.seq, FrameType.ImgPullChunk, 0);
-    const pct = Math.floor((ctx.got * 100) / IMG_BYTES);
-    this.setSlotProgress(ctx.slot, true, "", pct);
-  },
-
-  async onPullFinish(f) {
-    const pl = new Uint8Array(f.payload);
-    if (pl.length < 1 + 4) return;
-    const slot = pl[0];
-    const totalLen = readLe32(pl, 1);
-
-    const ctx = this._pull;
-    if (!ctx) {
-      await ble.sendAck(f.session, f.seq, FrameType.ImgPullFinish, 0);
-      return;
-    }
-    if (slot !== (ctx.slot & 0xff) || totalLen !== IMG_BYTES) {
-      await ble.sendAck(f.session, f.seq, FrameType.ImgPullFinish, 1);
-      ble.log("PULL_FINISH mismatch，已 ACK 但忽略渲染");
-      this.scheduleUiRefresh(true);
-      return;
-    }
-
-    ctx.done = true;
-    await ble.sendAck(f.session, f.seq, FrameType.ImgPullFinish, 0);
-    this.setSlotStatus(ctx.slot, "pull OK");
-
-    try {
-      await this._renderThumbFromRgb565(ctx.slot, ctx.buf);
-      // 缓存到本地，下次无需再拉取
-      thumbCacheSet(ctx.slot, ctx.buf);
-      // pull 完成：标记预览已就绪（并假定该 slot 有图）
-      this._slotsCache = (this._slotsCache || this.data.slots || []).map((s) =>
-        (s.slot === ctx.slot ? { ...s, hasImage: true, previewReady: true } : s)
-      );
-      this._slotsDirty = true;
-      this.setSlotProgress(ctx.slot, false, "", 0);
-      this.scheduleUiRefresh(true);
-      ble.log(`PULL_FINISH slot${ctx.slot} 渲染完成`);
-    } catch (e) {
-      ble.log("render FAIL: " + ((e && e.message) || String(e)));
-    } finally {
-      this._pull = null;
-      this.scheduleUiRefresh(true);
-      // 若队列里还有待拉取，继续
-      this._runPullQueue();
-    }
+    await startThumbPullImmediate(slot);
   },
 
   async onPush(evt) {
@@ -2410,9 +2499,8 @@ Page({
       await ble.disconnect();
     } catch (_) {}
 
-    // 返回连接页后：让 connect 页主动扫描（通过 query 参数触发）
     try {
-      wx.redirectTo({ url: "/pages/connect/connect?scan=1" });
+      wx.redirectTo({ url: "/pages/connect/connect" });
     } catch (_) {}
   },
 

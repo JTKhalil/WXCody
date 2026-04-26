@@ -74,7 +74,8 @@ export function buildHanddrawStrokePayload(x0: number, y0: number, x1: number, y
   return p;
 }
 
-const HANDDRAW_BATCH_MAX = 14;
+/** 单帧最大段数：7B/段 + 1B 计数，整帧仍低于常见 BLE ATT MTU */
+const HANDDRAW_BATCH_MAX = 20;
 
 export function buildHanddrawStrokeBatchPayload(
   segs: Array<{ x0: number; y0: number; x1: number; y1: number; c: number; w: number }>

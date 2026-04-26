@@ -99,7 +99,12 @@ Page({
       }
     });
 
-    ble.onConnectionStateChange(() => {
+    ble.onConnectionStateChange((connected) => {
+      if (!connected && this._pull && !this._pull.done) {
+        const slot = this._pull.slot;
+        this._pull = null;
+        this.setSlotStatus(slot, "已断开");
+      }
       this.syncState();
       this.scheduleUiRefresh(true);
     });

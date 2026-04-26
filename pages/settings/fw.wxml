@@ -1,0 +1,26 @@
+<scroll-view class="pageScroll" scroll-y="{{canScroll}}" enhanced="{{true}}" bounces="{{false}}" show-scrollbar="{{false}}" scroll-with-animation="{{false}}">
+<view class="container">
+  <view class="card">
+    <view class="mono">当前版本：{{fwCurrent || "-"}}</view>
+    <view class="mono">最新版本：{{fwLatest || "-"}}</view>
+    <view wx:if="{{fwUpdateAvailable}}" style="margin-top:10px;">
+      <view class="mono" style="font-weight:800; color:#fff; margin-bottom:6px;">更新内容</view>
+      <view class="mono" style="white-space:pre-wrap; color:#2ecc71;">{{fwNotes}}</view>
+    </view>
+    <view class="mono" wx:elif="{{fwNotes}}" style="margin-top:8px; white-space:pre-wrap; color:#aaa;">{{fwNotes}}</view>
+
+    <view class="mono" wx:if="{{fwStatus}}" style="margin-top:8px; color:#aaa;">{{fwStatus}}</view>
+
+    <view wx:if="{{fwBusy && fwBusyMode==='upgrade'}}" style="margin-top:14px;">
+      <progress percent="{{fwPercent}}" stroke-width="6" />
+      <view class="mono" style="margin-top:8px; text-align:right; color:#aaa;">{{fwPercent}}%</view>
+    </view>
+
+    <view class="row" style="margin-top:10px;">
+      <button class="btn secondary" bindtap="onCheckUpdate" disabled="{{!connected || fwBusy}}">刷新</button>
+      <button class="btn" bindtap="onUpgrade" disabled="{{!connected || fwBusy || !fwUpdateAvailable}}">{{fwUpdateAvailable ? "升级" : "已是最新"}}</button>
+    </view>
+  </view>
+</view>
+</scroll-view>
+

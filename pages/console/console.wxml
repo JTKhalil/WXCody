@@ -1,5 +1,10 @@
 <scroll-view class="pageScroll" scroll-y="{{canScroll}}" enhanced="{{true}}" bounces="{{false}}" show-scrollbar="{{false}}" scroll-with-animation="{{false}}">
 <view class="container">
+  <view wx:if="{{fwBgRunning}}" class="fwTopProgressWrap">
+    <view class="fwTopBarTrack">
+      <view class="fwTopBarFill" style="width: {{fwBgPercent}}%;" />
+    </view>
+  </view>
   <!-- Tab: Mode -->
   <view class="card" wx:if="{{activeTab===0}}">
     <view class="title">模式</view>
@@ -126,6 +131,10 @@
         <loading mode="circular">准备游戏中…</loading>
       </view>
     </view>
+
+    <view class="row" style="margin-top:12px; flex-wrap:wrap;">
+      <button class="btn secondary hdMainBtn" bindtap="onHdClear" disabled="{{!connected || hdDrawBlocked || hdClearing}}">清屏</button>
+    </view>
     <view class="row" style="margin-bottom:8px; flex-wrap:wrap;">
       <view class="mono" style="width:100%;margin-bottom:6px;">画笔颜色</view>
       <view wx:for="{{hdPalette}}" wx:key="*this" class="hdSwatch {{hdPenHex===item?'hdSwatchOn':''}}" style="background:{{item}};" data-hex="{{item}}" bindtap="onHdPickColor" />
@@ -137,62 +146,36 @@
       <switch checked="{{hdMirror}}" bindchange="onHdMirrorToggle" />
     </view>
     <view class="row" style="margin-top:12px; flex-wrap:wrap;">
-      <button class="btn secondary" bindtap="onHdClear" disabled="{{!connected || hdDrawBlocked || hdClearing}}">清屏</button>
-      <button class="btn" bindtap="onHdGuessGame" disabled="{{!connected || hdDrawBlocked || hdClearing || hdGuessStarting}}">{{hdGuessPlaying ? '结束游戏' : '开始你画我猜'}}</button>
+      <button class="btn hdMainBtn" bindtap="onHdGuessGame" disabled="{{!connected || hdDrawBlocked || hdClearing || hdGuessStarting}}">{{hdGuessPlaying ? '结束游戏' : '你画我猜'}}</button>
     </view>
     <view wx:if="{{hdGuessPlaying && hdGuessPrompt}}" class="row" style="margin-top:10px;">
-      <button class="btn hdGuessSkipBtn" bindtap="onHdGuessSkip" disabled="{{!connected || !hdGuessPlaying || hdDrawBlocked || hdClearing || hdGuessStarting}}">跳过</button>
+      <button class="btn hdGuessSkipBtn hdMainBtn" bindtap="onHdGuessSkip" disabled="{{!connected || !hdGuessPlaying || hdDrawBlocked || hdClearing || hdGuessStarting}}">跳过</button>
     </view>
   </view>
 
   <!-- Tab: Settings -->
-  <view class="card" wx:if="{{activeTab===4}}">
-    <view class="title">当前连接</view>
-    <view class="mono">Cody：{{codyName || "-"}}</view>
-    <view class="row" style="margin-top:10px;">
-      <button class="btn secondary" bindtap="onDisconnectBle" disabled="{{!connected}}">断开蓝牙连接</button>
-    </view>
-  </view>
-
-  <view class="card" wx:if="{{activeTab===4}}">
-    <view class="title">存储空间</view>
-    <view class="mono">total: {{fsTotal}} KB</view>
-    <view class="mono">used: {{fsUsed}} KB</view>
-    <view class="mono">free: {{fsFree}} KB</view>
-    <progress percent="{{fsPercent}}" stroke-width="6" />
-    <view class="row" style="margin-top:10px;">
-      <button class="btn secondary" bindtap="onRefreshFs" disabled="{{!connected}}">刷新</button>
-    </view>
-  </view>
-
-  <view class="card" wx:if="{{activeTab===4}}">
-    <view class="title">固件版本</view>
-    <view class="mono">current: {{fwCurrent || "-"}}</view>
-    <view class="mono">latest: {{fwLatest || "-"}}</view>
-    <view class="mono" wx:if="{{fwUpdateAvailable}}" style="margin-top:8px; white-space:pre-wrap;">{{fwNotes}}</view>
-    <view class="mono" wx:elif="{{fwNotes}}" style="margin-top:8px; white-space:pre-wrap; color:#aaa;">{{fwNotes}}</view>
-    <view wx:if="{{fwBusy && fwBusyMode==='upgrade'}}" style="margin-top:14px;">
-      <progress percent="{{fwPercent}}" stroke-width="6" />
-      <view class="mono" style="margin-top:8px; text-align:right; color:#aaa;">{{fwPercent}}%</view>
-    </view>
-    <view class="mono" wx:if="{{fwStatus}}" style="margin-top:8px; color:#aaa;">{{fwStatus}}</view>
-    <view class="row" style="margin-top:10px;">
-      <button class="btn secondary" bindtap="onCheckUpdate" disabled="{{!connected || fwBusy}}">刷新</button>
-      <button class="btn" bindtap="onUpgrade" disabled="{{!connected || fwBusy || !fwUpdateAvailable}}">{{fwUpdateAvailable ? "升级新版本" : "已是最新"}}</button>
-    </view>
-  </view>
-
-  <view class="card" wx:if="{{activeTab===4}}">
-    <view class="title">背光亮度</view>
-    <view class="mono">亮度：{{brightness}}</view>
-    <slider min="0" max="255" value="{{brightness}}" step="1" bindchanging="onBrightnessChanging" bindchange="onBrightnessChange" />
-  </view>
-
-  <view class="card" wx:if="{{activeTab===4}}">
-    <view class="title danger">危险操作</view>
-    <view class="row">
-      <button class="btn danger" bindtap="onAskConfirm" data-action="format_fs" disabled="{{!connected}}">删除Cody上的所有数据</button>
-      <button class="btn secondary" bindtap="onAskConfirm" data-action="reset_system" disabled="{{!connected}}">恢复出厂设置</button>
+  <view wx:if="{{activeTab===4}}">
+    <!-- 系统设置主列表：仅保留标题按钮 -->
+    <view class="card">
+      <view class="title">系统设置</view>
+      <view class="settingsList">
+        <button class="settingsEntry" bindtap="onOpenSystemSettings" data-page="conn">
+          <text class="settingsIcon">🔌</text>
+          <text class="settingsLabel">连接设置</text>
+        </button>
+        <button class="settingsEntry" bindtap="onOpenSystemSettings" data-page="fs">
+          <text class="settingsIcon">💾</text>
+          <text class="settingsLabel">存储空间</text>
+        </button>
+        <button class="settingsEntry" bindtap="onOpenSystemSettings" data-page="fw">
+          <text class="settingsIcon">⬆️</text>
+          <text class="settingsLabel">更新设置</text>
+        </button>
+        <button class="settingsEntry" bindtap="onOpenSystemSettings" data-page="bright">
+          <text class="settingsIcon">💡</text>
+          <text class="settingsLabel">背光亮度</text>
+        </button>
+      </view>
     </view>
   </view>
 

@@ -1,9 +1,8 @@
 <scroll-view class="pageScroll" scroll-y="{{canScroll}}" enhanced="{{true}}" bounces="{{false}}" show-scrollbar="{{false}}" scroll-with-animation="{{false}}">
 <view class="container">
-  <view class="center">
-    <image class="logoImg" src="/assets/splash_logo.png" mode="widthFix" />
-
-    <view class="sub" wx:if="{{statusText}}">{{statusText}}</view>
+  <view class="card">
+    <view class="mono">亮度：{{brightness}}</view>
+    <slider min="0" max="255" value="{{brightness}}" step="1" bindchanging="onBrightnessChanging" bindchange="onBrightnessChange" />
   </view>
 </view>
 </scroll-view>

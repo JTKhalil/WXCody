@@ -1,0 +1,48 @@
+<scroll-view class="pageScroll" scroll-y="{{false}}" enhanced="{{true}}" bounces="{{false}}" show-scrollbar="{{false}}" scroll-with-animation="{{false}}">
+<view class="container">
+  <view class="card">
+    <view class="hdLabel">画板（手绘同步存在延迟属于正常现象）</view>
+    <view wx:if="{{hdGuessPlaying && hdGuessPrompt}}" class="hdGuessPrompt mono">{{hdGuessPrompt}}</view>
+    <view class="hdCanvasWrap">
+      <canvas id="canvasDraw" type="2d" class="hdCanvas" bindtouchstart="onHdTouchStart" catchtouchmove="onHdTouchMove" bindtouchend="onHdTouchEnd" bindtouchcancel="onHdTouchEnd" />
+      <view wx:if="{{hdPulling}}" class="hdPullOverlay">
+        <text class="hdPullTitle">正在从设备同步画稿</text>
+        <view class="hdPullBarTrack">
+          <view class="hdPullBarFill" style="width: {{hdPullPercent}}%;" />
+        </view>
+        <text class="hdPullPct">{{hdPullPercent}}%</text>
+      </view>
+      <view wx:if="{{hdDrawBlocked || hdGuessRevealBlock}}" class="hdModeBlockOverlay" catchtouchmove="noop" catchtouchstart="noop">
+        <text class="hdModeBlockText">{{hdGuessRevealBlock ? hdGuessRevealMsg : hdDrawBlockMsg}}</text>
+      </view>
+      <view wx:if="{{hdClearing}}" class="hdClearOverlay" catchtouchmove="noop" catchtouchstart="noop">
+        <loading mode="circular">正在清屏…</loading>
+      </view>
+      <view wx:if="{{hdGuessStarting}}" class="hdClearOverlay hdGuessStartOverlay" catchtouchmove="noop" catchtouchstart="noop">
+        <loading mode="circular">准备游戏中…</loading>
+      </view>
+    </view>
+
+    <view class="row" style="margin-top:12px; flex-wrap:wrap;">
+      <button class="btn secondary hdMainBtn" bindtap="onHdClear" disabled="{{!connected || hdDrawBlocked || hdClearing}}">清屏</button>
+    </view>
+    <view class="row" style="margin-bottom:8px; flex-wrap:wrap;">
+      <view class="mono" style="width:100%;margin-bottom:6px;">画笔颜色</view>
+      <view wx:for="{{hdPalette}}" wx:key="*this" class="hdSwatch {{hdPenHex===item?'hdSwatchOn':''}}" style="background:{{item}};" data-hex="{{item}}" bindtap="onHdPickColor" />
+    </view>
+    <view class="mono" style="margin-top:8px;">画笔粗细：{{hdStrokeW}} px</view>
+    <slider min="2" max="16" value="{{hdStrokeW}}" step="2" bindchanging="onHdStrokeChanging" bindchange="onHdStrokeChange" />
+    <view class="row" style="justify-content:space-between; align-items:center; margin-top:10px;">
+      <view class="mono">镜像模式</view>
+      <switch checked="{{hdMirror}}" bindchange="onHdMirrorToggle" />
+    </view>
+    <view class="row" style="margin-top:12px; flex-wrap:wrap;">
+      <button class="btn hdMainBtn" bindtap="onHdGuessGame" disabled="{{!connected || hdDrawBlocked || hdClearing || hdGuessStarting}}">{{hdGuessPlaying ? '结束游戏' : '你画我猜'}}</button>
+    </view>
+    <view wx:if="{{hdGuessPlaying && hdGuessPrompt}}" class="row" style="margin-top:10px;">
+      <button class="btn hdGuessSkipBtn hdMainBtn" bindtap="onHdGuessSkip" disabled="{{!connected || !hdGuessPlaying || hdDrawBlocked || hdClearing || hdGuessStarting}}">跳过</button>
+    </view>
+  </view>
+</view>
+</scroll-view>
+

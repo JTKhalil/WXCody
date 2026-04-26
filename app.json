@@ -3,6 +3,13 @@
     "pages/splash/splash",
     "pages/connect/connect",
     "pages/console/console",
+    "pages/mode/image/image",
+    "pages/mode/note/note",
+    "pages/mode/handdraw/handdraw",
+    "pages/settings/conn",
+    "pages/settings/fs",
+    "pages/settings/fw",
+    "pages/settings/bright",
     "pages/ota/ota",
     "pages/gallery/gallery"
   ],

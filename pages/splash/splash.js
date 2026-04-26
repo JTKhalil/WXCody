@@ -26,6 +26,18 @@ function withTimeout(promise, ms) {
   });
 }
 
+function _loadClientId() {
+  let cid = "";
+  try { cid = String(wx.getStorageSync("wxcody_client_id") || ""); } catch (_) {}
+  return String(cid || "").trim();
+}
+
+function _loadDeviceName() {
+  let dn = "";
+  try { dn = String(wx.getStorageSync("wxcody_device_name") || ""); } catch (_) {}
+  return String(dn || "").trim();
+}
+
 Page({
   data: {
     statusText: "",
@@ -92,6 +104,16 @@ Page({
       await withTimeout(ble.openAdapter(), 700);
       await withTimeout(ble.connect(lastId), 1200);
       await withTimeout(ble.discoverAndSubscribe(), 1200);
+      // 关键：发送 pair_hello，让固件端能识别“已信任设备”并将 pair_status.pending 置为 false
+      try {
+        const name = _loadDeviceName();
+        const id = _loadClientId();
+        if (name) {
+          await withTimeout(ble.sendJson({ cmd: "pair_hello", name, id }), 400);
+          await sleep(60);
+          await withTimeout(ble.sendJson({ cmd: "pair_hello", name, id }), 400);
+        }
+      } catch (_) {}
       // 已信任设备：pair_status 应返回 pending=false
       const r = await withTimeout(
         ble.sendJsonStopAndWait({ cmd: "pair_status" }, { timeoutMs: 450, retries: 2 }),

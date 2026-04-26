@@ -1,0 +1,41 @@
+<scroll-view class="pageScroll" scroll-y="{{canScroll}}" enhanced="{{true}}" bounces="{{false}}" show-scrollbar="{{false}}" scroll-with-animation="{{false}}">
+<view class="container">
+  <view class="card">
+    <view class="title">图片轮播</view>
+    <view class="row" style="justify-content:space-between; align-items:center;">
+      <view class="mono">启用轮播</view>
+      <switch checked="{{imgSlideshowEnabled}}" bindchange="onImgSlideshowToggle" />
+    </view>
+    <view class="mono" style="margin-top:10px;">间隔：{{imgInterval}} 秒</view>
+    <slider min="3" max="60" value="{{imgInterval}}" step="1" bindchanging="onImgIntervalChanging" bindchange="onImgIntervalChange" />
+  </view>
+
+  <view class="card">
+    <view class="slots">
+      <view class="slot {{item.hasImage ? 'hasImage' : ''}}" wx:for="{{slots}}" wx:key="slot">
+        <view class="thumb">
+          <canvas id="thumb{{item.slot}}" type="2d" class="thumbCanvas" />
+          <view class="thumbMask" wx:if="{{item.busy}}"></view>
+          <view class="thumbProgress" wx:if="{{item.busy}}">
+            <progress class="pProg" percent="{{item.progressPct}}" stroke-width="6" />
+            <view class="pText">{{item.progressPct}}%</view>
+            <button class="btn secondary smallBtn cancelBtn" wx:if="{{item.status==='pushing...'}}" catchtap="onCancelUpload" data-slot="{{item.slot}}">取消上传</button>
+          </view>
+          <view class="thumbHint" wx:elif="{{!item.hasImage}}">请上传图片</view>
+          <view class="thumbHint" wx:elif="{{!item.previewReady}}"></view>
+          <view class="thumbDel {{uploadLock ? 'disabled' : ''}}" wx:if="{{item.hasImage}}" catchtap="onDeleteImage" data-slot="{{item.slot}}">×</view>
+        </view>
+
+        <view class="row" style="margin-top:10px;">
+          <button class="btn" catchtap="onPush" data-from="btn" data-slot="{{item.slot}}" disabled="{{!connected || item.busy || (uploadLock && uploadingSlot!==item.slot)}}">
+            {{item.hasImage ? "替换" : "上传"}}
+          </button>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <canvas id="workCanvas" type="2d" class="workCanvas" />
+</view>
+</scroll-view>
+
