@@ -21,9 +21,9 @@
 
 - `pages/splash/splash`：启动页（尝试自动重连上次设备，失败则进入连接页）
 - `pages/connect/connect`：连接页（打开蓝牙、扫描 `Cody-*`、连接、PING、查看日志）
-- `pages/console/console`：主控制台（模式 / 图库 / 笔记 / 设置 + OTA）
-- `pages/ota/ota`：独立 OTA 页（选择文件或 URL 下载，然后推送 OTA）
-- `pages/gallery/gallery`：独立 图库 页（拉取/上传 slot 图片预览）
+- `pages/console/console`：主控制台（模式切换、系统设置入口等）
+- `pages/mode/image|note|handdraw/*`：图片 / 笔记 / 手绘模式设置页
+- `pages/settings/*`：连接、存储、**更新（含在线升级与本地 `firmware.bin`）**、背光等
 
 ### BLE 约定（必须与固件一致）
 
@@ -94,15 +94,13 @@ UUID 常量在 `services/ble.ts`（以及运行时实际使用的 `services/ble.
 
 实现主要在：
 
-- `pages/gallery/gallery.ts`（独立图库页）
-- `pages/console/console.js`（控制台图库 tab，更完整：缓存/队列拉取/替换策略/取消上传等）
+- `pages/mode/image/image.js`（图片模式：图槽、缩略图同步等）
+- `pages/console/console.js`（控制台内仍保留部分图库相关 Tab 逻辑时，与 `img_thumb_sync` 等配合）
 
 ### OTA 升级
 
-两种入口：
-
-- `pages/ota/ota.ts`：选择 `.bin` 文件或输入 URL 下载，然后通过二进制帧推送
-- `pages/console/console.js` 设置页：可从远端 URL 检查版本并下载 `firmware.bin` 推送
+- `services/fw_upgrade.js`：统一 OTA 推送（`OtaBegin` / `OtaChunk` / `OtaFinish`）；在线升级从远端下载 `firmware.bin`，**本地升级**从用户选择的 `.bin` 临时路径读取后推送。
+- `pages/settings/fw.js`（更新设置）：检查版本、在线升级、**选择本地 firmware.bin 升级**。
 
 注意：
 

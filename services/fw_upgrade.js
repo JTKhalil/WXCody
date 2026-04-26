@@ -109,15 +109,24 @@ async function downloadFirmwareBytes() {
   return fw;
 }
 
-async function runUpgrade() {
-  if (!ble.state.connected) throw new Error("not connected");
+async function readFirmwareFromLocalPath(filePath) {
+  const fs = wx.getFileSystemManager();
+  const ab = await new Promise((resolve, reject) => {
+    fs.readFile({
+      filePath,
+      success: (r) => resolve(r.data),
+      fail: (e) => reject(new Error((e && e.errMsg) || "readFile failed")),
+    });
+  });
+  const fw = new Uint8Array(ab);
+  if (!fw.length) throw new Error("firmware empty");
+  return fw;
+}
 
-  setState({ running: true, percent: 0, status: "下载固件中...", startedAt: now(), finishedAt: 0, error: "" });
-  const fw = await downloadFirmwareBytes();
-
-  setState({ status: "发送 OTA_BEGIN..." });
+async function pushOtaFirmwareBytes(fw) {
   const total = (fw.length >>> 0);
   const chunkBytes = 166;
+  setState({ status: "发送 OTA_BEGIN..." });
   const beginRes = await ble.sendFrameStopAndWaitDetailed(FrameType.OtaBegin, le32(total), { timeoutMs: 1200, retries: 3 });
   if (beginRes.errCode !== 0) throw new Error("OTA_BEGIN errCode=" + beginRes.errCode);
 
@@ -150,11 +159,26 @@ async function runUpgrade() {
   setState({ status: "完成：等待设备重启（会断开连接）", percent: 100, running: false, finishedAt: now() });
 }
 
-export async function startUpgrade() {
+async function runUpgrade() {
+  if (!ble.state.connected) throw new Error("not connected");
+
+  setState({ running: true, percent: 0, status: "下载固件中...", startedAt: now(), finishedAt: 0, error: "" });
+  const fw = await downloadFirmwareBytes();
+  await pushOtaFirmwareBytes(fw);
+}
+
+async function runUpgradeFromLocalPath(filePath) {
+  if (!ble.state.connected) throw new Error("not connected");
+  setState({ running: true, percent: 0, status: "读取本地固件...", startedAt: now(), finishedAt: 0, error: "" });
+  const fw = await readFirmwareFromLocalPath(filePath);
+  await pushOtaFirmwareBytes(fw);
+}
+
+function wrapUpgradeJob(run) {
   if (_jobP) return _jobP;
   _jobP = (async () => {
     try {
-      await runUpgrade();
+      await run();
     } catch (e) {
       setState({
         running: false,
@@ -168,5 +192,16 @@ export async function startUpgrade() {
     }
   })();
   return _jobP;
+}
+
+export async function startUpgrade() {
+  return wrapUpgradeJob(() => runUpgrade());
+}
+
+/** 从本地临时路径读取固件并 OTA（与 startUpgrade 互斥，共用进度状态） */
+export async function startUpgradeFromLocalFile(filePath) {
+  const p = String(filePath || "").trim();
+  if (!p) return Promise.reject(new Error("no file path"));
+  return wrapUpgradeJob(() => runUpgradeFromLocalPath(p));
 }
 

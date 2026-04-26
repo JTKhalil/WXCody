@@ -20,6 +20,10 @@
       <button class="btn secondary" bindtap="onCheckUpdate" disabled="{{!connected || fwBusy}}">刷新</button>
       <button class="btn" bindtap="onUpgrade" disabled="{{!connected || fwBusy || !fwUpdateAvailable}}">{{fwUpdateAvailable ? "升级" : "已是最新"}}</button>
     </view>
+    <view class="mono" style="margin-top:12px; color:#aaa;">从网络检查到新版本后可点「升级」；也可自行选择固件包推送到设备（请确认与设备匹配）。</view>
+    <view class="row" style="margin-top:10px;">
+      <button class="btn secondary" bindtap="onUpgradeLocal" disabled="{{!connected || fwBusy}}">选择本地 firmware.bin 升级</button>
+    </view>
   </view>
 </view>
 </scroll-view>

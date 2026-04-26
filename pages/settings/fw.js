@@ -1,5 +1,10 @@
 import { ble } from "../../services/ble";
-import { getState as getUpgradeState, onStateChange as onUpgradeStateChange, startUpgrade } from "../../services/fw_upgrade";
+import {
+  getState as getUpgradeState,
+  onStateChange as onUpgradeStateChange,
+  startUpgrade,
+  startUpgradeFromLocalFile,
+} from "../../services/fw_upgrade";
 
 const UPDATE_VERSION_URL = "https://raw.githubusercontent.com/JTKhalil/claudeRobot/main/version.txt";
 const STORAGE_UPDATE_INFO_KEY = "wxcody_fw_update_info";
@@ -98,6 +103,8 @@ Page({
   },
 
   _unsubUpgrade: null,
+  /** 选本地固件过程中会触发 onShow；避免与 setData 异步叠加导致 onCheckUpdate 误跑并清掉升级 UI */
+  _fwLocalPickFlow: false,
 
   onLoad() {
     this._sync();
@@ -113,6 +120,8 @@ Page({
     this._sync();
     this._loadCachedUpdateInfo();
     this._applyUpgradeState(getUpgradeState());
+    if (this._fwLocalPickFlow) return;
+    if (getUpgradeState().running) return;
     if (ble.state.connected) this.onCheckUpdate();
   },
 
@@ -176,6 +185,7 @@ Page({
 
   async onCheckUpdate() {
     if (!ble.state.connected) return;
+    if (getUpgradeState().running) return;
     if (this.data.fwBusy) return;
     this.setData({ fwBusy: true, fwBusyMode: "check", fwPercent: 0, fwStatus: "检查更新中..." });
 
@@ -210,7 +220,10 @@ Page({
       notes: (notes || this.data.fwNotes || "").trim(),
       updateAvailable: !!updateAvailable,
     });
-    this.setData({ fwBusy: false, fwBusyMode: "" });
+    // 检查耗时期间用户可能已开始 OTA；勿用「检查结束」覆盖升级中的 UI
+    if (!getUpgradeState().running) {
+      this.setData({ fwBusy: false, fwBusyMode: "" });
+    }
   },
 
   async onUpgrade() {
@@ -220,6 +233,37 @@ Page({
     try {
       await startUpgrade();
     } catch (_) {}
+  },
+
+  async onUpgradeLocal() {
+    if (!ble.state.connected) return;
+    if (this.data.fwBusy) return;
+    this._fwLocalPickFlow = true;
+    try {
+      const res = await new Promise((resolve, reject) => {
+        wx.chooseMessageFile({
+          count: 1,
+          type: "file",
+          extension: ["bin"],
+          success: resolve,
+          fail: (e) => reject(new Error((e && e.errMsg) || "chooseMessageFile failed")),
+        });
+      });
+      const f = (res && res.tempFiles && res.tempFiles[0]) || null;
+      if (!f || !f.path) throw new Error("未选择文件");
+      const nm = String(f.name || "").toLowerCase();
+      if (!nm.endsWith(".bin")) {
+        try { wx.showToast({ title: "请选择 firmware.bin", icon: "none" }); } catch (_) {}
+        return;
+      }
+      await startUpgradeFromLocalFile(f.path);
+    } catch (e) {
+      try {
+        wx.showToast({ title: String((e && e.message) || e || "升级失败"), icon: "none", duration: 2200 });
+      } catch (_) {}
+    } finally {
+      this._fwLocalPickFlow = false;
+    }
   },
 });
 

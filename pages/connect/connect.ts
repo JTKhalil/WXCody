@@ -78,14 +78,6 @@ Page({
     this.scheduleUiRefresh();
   },
 
-  onGoOta() {
-    wx.navigateTo({ url: "/pages/ota/ota" });
-  },
-
-  onGoGallery() {
-    wx.navigateTo({ url: "/pages/gallery/gallery" });
-  },
-
   async onReconnect() {
     try {
       this.setData({ status: "重连中..." });

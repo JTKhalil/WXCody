@@ -9,9 +9,7 @@
     "pages/settings/conn",
     "pages/settings/fs",
     "pages/settings/fw",
-    "pages/settings/bright",
-    "pages/ota/ota",
-    "pages/gallery/gallery"
+    "pages/settings/bright"
   ],
   "window": {
     "navigationBarTitleText": "WXCody",
