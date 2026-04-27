@@ -2,7 +2,7 @@
   "miniprogramRoot": "./",
   "projectname": "WXCody",
   "description": "Minimal BLE ping client for Cody",
-  "appid": "wx16efb7b915243125",
+  "appid": "",
   "setting": {
     "urlCheck": false,
     "es6": true,
