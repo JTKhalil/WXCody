@@ -1,0 +1,1 @@
+# 与远程保持 project.config.json 同步；本机 AppID 等请用微信支持的 project.private.config.json（勿把含密钥的 private 文件提交入库）
