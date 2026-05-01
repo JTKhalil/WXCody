@@ -1,0 +1,25 @@
+<scroll-view class="pageScroll" scroll-y="{{true}}" enhanced="{{true}}" bounces="{{false}}" show-scrollbar="{{false}}">
+<view class="container">
+  <view class="card">
+    <view class="title">静态表情风格</view>
+    <view class="hint">仅在 Cody 处于「表情模式」时生效；所选风格会保存在设备上，下次开机仍有效。</view>
+
+    <radio-group bindchange="onExprGroupChange">
+      <label class="option {{exprGroup===0?'on':''}}">
+        <radio value="0" checked="{{exprGroup===0}}" color="#e67e22" />
+        <view class="optMid">
+          <view class="optTitle">卜卜表情</view>
+          <view class="optDesc">新版差分渲染：眨眼、左右看、哭睡唱歌等连贯动画。</view>
+        </view>
+      </label>
+      <label class="option {{exprGroup===1?'on':''}}">
+        <radio value="1" checked="{{exprGroup===1}}" color="#e67e22" />
+        <view class="optMid">
+          <view class="optTitle">Coco表情</view>
+          <view class="optDesc">经典多动作脚本：风车、书本、杠铃等道具互动。</view>
+        </view>
+      </label>
+    </radio-group>
+  </view>
+</view>
+</scroll-view>

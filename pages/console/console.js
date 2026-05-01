@@ -1705,6 +1705,10 @@ Page({
       wx.navigateTo({ url: "/pages/mode/handdraw/handdraw" });
       return;
     }
+    if (mode === 3) {
+      wx.navigateTo({ url: "/pages/settings/expr" });
+      return;
+    }
     wx.showToast({ title: "功能还未开放", icon: "none" });
   },
 

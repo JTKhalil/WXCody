@@ -1,0 +1,48 @@
+@import "./_base.wxss";
+
+.hint {
+  color: #888;
+  font-size: 12px;
+  line-height: 1.45;
+  margin-bottom: 12px;
+}
+
+.option {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  padding: 12px 10px;
+  border-radius: 10px;
+  border: 1px solid #333;
+  margin-bottom: 10px;
+  background: #141416;
+}
+
+.option.on {
+  border-color: #e67e22;
+  background: #221a14;
+}
+
+.option radio {
+  margin-top: 2px;
+  margin-right: 10px;
+  flex-shrink: 0;
+}
+
+.optMid {
+  flex: 1;
+  min-width: 0;
+}
+
+.optTitle {
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.optDesc {
+  color: #999;
+  font-size: 12px;
+  line-height: 1.4;
+}
